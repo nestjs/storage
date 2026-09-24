@@ -15,3 +15,6 @@ renovate.json
 .release-it.json
 tsconfig.build.json
 vitest.config.ts
+
+# packed tarballs
+*.tgz
