@@ -69,7 +69,16 @@ describe('S3Disk', () => {
         'PUT big/multi.bin?partNumber&uploadId',
         'POST big/multi.bin?uploadId',
       ]);
-      expect(fake.requests.slice(1, 4).map((r) => r.bodyLength)).toEqual([5 * MiB, 5 * MiB, 2 * MiB + 17]);
+      // Parts upload concurrently, so they can arrive in any order: S3 assembles them by number
+      const parts = fake.requests
+        .slice(1, 4)
+        .map((request) => [Number(request.query.partNumber), request.bodyLength])
+        .sort(([a], [b]) => a - b);
+      expect(parts).toEqual([
+        [1, 5 * MiB],
+        [2, 5 * MiB],
+        [3, 2 * MiB + 17],
+      ]);
 
       const stored = fake.object('big/multi.bin')!;
       expect(stored.data.equals(data)).toBe(true);
