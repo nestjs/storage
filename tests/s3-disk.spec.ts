@@ -20,7 +20,7 @@ afterEach(() => expect(fake.signatureFailures).toEqual([]));
 
 const s3 = (options: Partial<S3DiskOptions> = {}) =>
   new S3Disk({
-    bucket: 'acme',
+    bucket: 'shop',
     region: 'eu-central-1',
     endpoint: fake.ipEndpoint,
     credentials,
@@ -301,7 +301,7 @@ describe('S3Disk', () => {
       const disk = s3();
       await disk.put('logs/app.log', 'plain');
       // Another tool stored it gzip-encoded (a static-site deploy, a log shipper)
-      fake.objects.set('acme/logs/app.log.gz', { ...fake.object('logs/app.log')!, contentEncoding: 'gzip' });
+      fake.objects.set('shop/logs/app.log.gz', { ...fake.object('logs/app.log')!, contentEncoding: 'gzip' });
 
       const error = await disk.get('logs/app.log.gz').catch((e) => e);
       expect(error).toBeInstanceOf(StorageError);
@@ -329,7 +329,7 @@ describe('S3Disk', () => {
     it('reads the standard environment variables, session token included', async () => {
       Object.assign(process.env, { AWS_ACCESS_KEY_ID: ACCESS_KEY, AWS_SECRET_ACCESS_KEY: SECRET_KEY, AWS_SESSION_TOKEN: 'token-123', AWS_REGION: 'ap-south-1' });
       fake.sessionToken = 'token-123';
-      const disk = new S3Disk({ bucket: 'acme', endpoint: fake.ipEndpoint });
+      const disk = new S3Disk({ bucket: 'shop', endpoint: fake.ipEndpoint });
 
       expect(disk.region).toBe('ap-south-1');
       await disk.put('t.txt', 'x');
@@ -342,8 +342,8 @@ describe('S3Disk', () => {
     it('fails at startup without credentials, naming the options', () => {
       delete process.env.AWS_ACCESS_KEY_ID;
       delete process.env.AWS_SECRET_ACCESS_KEY;
-      expect(() => new S3Disk({ bucket: 'acme' })).toThrow(/AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY/);
-      expect(() => new S3Disk({ bucket: 'acme', credentials: { accessKeyId: '', secretAccessKey: 'x' } })).toThrow('accessKeyId');
+      expect(() => new S3Disk({ bucket: 'shop' })).toThrow(/AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY/);
+      expect(() => new S3Disk({ bucket: 'shop', credentials: { accessKeyId: '', secretAccessKey: 'x' } })).toThrow('accessKeyId');
     });
 
     it('calls a credentials function for every request', async () => {
@@ -389,7 +389,7 @@ describe('S3Disk', () => {
       const disk = s3();
       await disk.put('ok/file.txt', 'x');
       for (const odd of ['ok/', 'ok//double', 'ok/./dot']) {
-        fake.objects.set(`acme/${odd}`, { ...fake.object('ok/file.txt')! });
+        fake.objects.set(`shop/${odd}`, { ...fake.object('ok/file.txt')! });
       }
 
       expect((await disk.list({ prefix: 'ok/' })).entries.map((e) => e.key)).toEqual(['ok/file.txt']);
@@ -418,26 +418,26 @@ describe('S3Disk', () => {
       const presignedHost = async (options: Partial<S3DiskOptions>) =>
         new URL(await s3({ endpoint: undefined, region: 'eu-west-1', ...options }).signedUrl('k.txt'));
 
-      expect((await presignedHost({})).host).toBe('acme.s3.eu-west-1.amazonaws.com');
-      expect((await presignedHost({ bucket: 'acme.assets' })).pathname).toBe('/acme.assets/k.txt');
-      expect((await presignedHost({ bucket: 'Acme_Assets' })).pathname).toBe('/Acme_Assets/k.txt');
+      expect((await presignedHost({})).host).toBe('shop.s3.eu-west-1.amazonaws.com');
+      expect((await presignedHost({ bucket: 'shop.assets' })).pathname).toBe('/shop.assets/k.txt');
+      expect((await presignedHost({ bucket: 'Shop_Assets' })).pathname).toBe('/Shop_Assets/k.txt');
       expect((await presignedHost({ forcePathStyle: true })).host).toBe('s3.eu-west-1.amazonaws.com');
       expect((await presignedHost({ endpoint: 'https://acct.r2.cloudflarestorage.com', region: 'auto' })).host).toBe(
-        'acme.acct.r2.cloudflarestorage.com',
+        'shop.acct.r2.cloudflarestorage.com',
       );
-      expect((await presignedHost({ endpoint: 'http://10.0.0.5:9000' })).pathname).toBe('/acme/k.txt');
+      expect((await presignedHost({ endpoint: 'http://10.0.0.5:9000' })).pathname).toBe('/shop/k.txt');
     });
 
     it('wrong credentials are refused by the fake, so a passing test means a valid signature', async () => {
       const error = await s3({ credentials: { accessKeyId: ACCESS_KEY, secretAccessKey: 'wrong' }, retry: false }).getText('x').catch((e) => e);
       expect(error).toMatchObject({ code: 'SignatureDoesNotMatch', upstreamStatus: 403 });
-      expect(fake.signatureFailures[0]).toMatch(/^signature mismatch for\nGET\n\/acme\/x\n/);
+      expect(fake.signatureFailures[0]).toMatch(/^signature mismatch for\nGET\n\/shop\/x\n/);
       fake.signatureFailures.length = 0;
     });
 
     it('url() needs a publicUrl', () => {
       expect(() => s3().url('a')).toThrow(StorageError);
-      expect(s3({ publicUrl: 'https://cdn.acme.example' }).url('covers/a b.jpg')).toBe('https://cdn.acme.example/covers/a%20b.jpg');
+      expect(s3({ publicUrl: 'https://cdn.example.com' }).url('photos/a b.jpg')).toBe('https://cdn.example.com/photos/a%20b.jpg');
     });
   });
 });

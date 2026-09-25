@@ -5,7 +5,7 @@
 export interface StorageSignedUrlOptions {
   /**
    * The absolute URL of the route that serves the disk's files, e.g.
-   * `https://api.acme.example/files`. The key and the signature go in its query string.
+   * `https://api.example.com/files`. The key and the signature go in its query string.
    */
   baseUrl: string | URL;
   /**

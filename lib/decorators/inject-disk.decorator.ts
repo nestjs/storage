@@ -3,7 +3,7 @@ import { StorageDisk } from '../disks/storage.disk.js';
 import { getDiskToken, requestDiskName } from '../storage.module-definition.js';
 
 /**
- * Injects the disk called `name`: `@InjectDisk('covers') private readonly covers: StorageDisk`.
+ * Injects the disk called `name`: `@InjectDisk('photos') private readonly photos: StorageDisk`.
  * Without a name, the default disk (the same as typing the parameter as `StorageDisk`).
  */
 export function InjectDisk(name?: string): PropertyDecorator & ParameterDecorator {

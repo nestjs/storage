@@ -45,7 +45,7 @@ export interface S3DiskOptions extends Omit<StorageDiskOptions, 'signedUrls'> {
    * is called before every request, so it can return rotating credentials (it should cache).
    */
   credentials?: S3Credentials | (() => S3Credentials | Promise<S3Credentials>);
-  /** Prefix every key with this (e.g. `'tenants/acme/'`), so several disks can share a bucket. */
+  /** Prefix every key with this (e.g. `'tenants/t1/'`), so several disks can share a bucket. */
   prefix?: string;
   /** Server-side encryption for new objects: `AES256` (SSE-S3) or `aws:kms` (SSE-KMS, with `kmsKeyId`). */
   serverSideEncryption?: 'AES256' | 'aws:kms' | 'aws:kms:dsse';

@@ -45,12 +45,12 @@ describe.skipIf(!minio)('S3Disk against MinIO', () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
 
-    const url = new URL(`${endpoint}/acme`);
+    const url = new URL(`${endpoint}/shop`);
     const headers = signRequest({ method: 'PUT', url, headers: { 'x-amz-content-sha256': EMPTY_SHA256 }, payloadHash: EMPTY_SHA256, credentials, region: 'us-east-1' });
     const res = await fetch(url, { method: 'PUT', headers });
     expect(res.status).toBe(200);
 
-    disk = new S3Disk({ bucket: 'acme', endpoint, forcePathStyle: true, region: 'us-east-1', credentials, multipart: { partSize: 5 * 1024 * 1024 } });
+    disk = new S3Disk({ bucket: 'shop', endpoint, forcePathStyle: true, region: 'us-east-1', credentials, multipart: { partSize: 5 * 1024 * 1024 } });
   }, 30_000);
 
   afterAll(() => {

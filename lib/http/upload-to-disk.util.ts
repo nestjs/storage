@@ -17,8 +17,8 @@ import { storageForRequest } from './app-registry.util.js';
  * disk, on Express (multer) and Fastify (`@nestjs/platform-fastify/multipart`) alike:
  *
  * ```ts
- * @UseInterceptors(FileInterceptor('cover', {
- *   storage: uploadToDisk({ disk: 'covers', contentTypes: ['image/jpeg', 'image/png'] }),
+ * @UseInterceptors(FileInterceptor('photo', {
+ *   storage: uploadToDisk({ disk: 'photos', contentTypes: ['image/jpeg', 'image/png'] }),
  *   limits: { fileSize: 5_000_000 },
  * }))
  * ```

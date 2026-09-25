@@ -23,8 +23,8 @@ import { ACCESS_KEY, FakeS3, SECRET_KEY } from './fake-s3.js';
 
 const fake = new FakeS3();
 const dirs: string[] = [];
-const signedUrls = { baseUrl: 'https://api.acme.example/files', keys: ['k'.repeat(32)] };
-const publicUrl = 'https://cdn.acme.example/assets/';
+const signedUrls = { baseUrl: 'https://api.example.com/files', keys: ['k'.repeat(32)] };
+const publicUrl = 'https://cdn.example.com/assets/';
 
 beforeAll(() => fake.start());
 afterAll(async () => {
@@ -49,7 +49,7 @@ const disks: [string, () => StorageDisk][] = [
     () => {
       fake.reset();
       return new S3Disk({
-        bucket: 'acme',
+        bucket: 'shop',
         region: 'eu-central-1',
         endpoint: fake.ipEndpoint,
         credentials: { accessKeyId: ACCESS_KEY, secretAccessKey: SECRET_KEY },
@@ -63,7 +63,7 @@ const disks: [string, () => StorageDisk][] = [
     () => {
       fake.reset();
       return new S3Disk({
-        bucket: 'acme',
+        bucket: 'shop',
         region: 'eu-central-1',
         endpoint: fake.hostEndpoint,
         prefix: 'tenants/t1/',
@@ -109,13 +109,13 @@ describe.each(disks)('%s', (name, create) => {
     });
 
     it('returns the body as a stream, with the metadata', async () => {
-      await disk.put('covers/b1.jpg', Buffer.from([0xff, 0xd8, 0xff, 0xe0]), {
+      await disk.put('photos/p1.jpg', Buffer.from([0xff, 0xd8, 0xff, 0xe0]), {
         cacheControl: 'public, max-age=31536000, immutable',
         contentDisposition: 'inline',
-        metadata: { BookId: 'b1', uploadedBy: 'staff-7' },
+        metadata: { ProductId: 'p1', uploadedBy: 'staff-7' },
       });
 
-      const download = await disk.get('covers/b1.jpg');
+      const download = await disk.get('photos/p1.jpg');
       const chunks: Buffer[] = [];
       for await (const chunk of download.body) {
         chunks.push(chunk as Buffer);
@@ -123,26 +123,26 @@ describe.each(disks)('%s', (name, create) => {
 
       expect(Buffer.concat(chunks)).toEqual(Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
       expect(download).toMatchObject({
-        key: 'covers/b1.jpg',
+        key: 'photos/p1.jpg',
         size: 4,
         contentType: 'image/jpeg',
         cacheControl: 'public, max-age=31536000, immutable',
         contentDisposition: 'inline',
-        metadata: { bookid: 'b1', uploadedby: 'staff-7' },
+        metadata: { productid: 'p1', uploadedby: 'staff-7' },
       });
       expect(download.lastModified).toBeInstanceOf(Date);
       expect(download.range).toBeUndefined();
-      expect(await disk.stat('covers/b1.jpg')).toMatchObject({ size: 4, contentType: 'image/jpeg', metadata: { bookid: 'b1' } });
+      expect(await disk.stat('photos/p1.jpg')).toMatchObject({ size: 4, contentType: 'image/jpeg', metadata: { productid: 'p1' } });
     });
 
     it('infers the content type from the extension, and an explicit one wins', async () => {
       await disk.put('a/invoice.PDF', 'x');
       await disk.put('a/noext', 'x');
-      await disk.put('a/data.json', 'x', { contentType: 'application/vnd.acme+json' });
+      await disk.put('a/data.json', 'x', { contentType: 'application/vnd.example+json' });
 
       expect((await disk.stat('a/invoice.PDF')).contentType).toBe('application/pdf');
       expect((await disk.stat('a/noext')).contentType).toBe('application/octet-stream');
-      expect((await disk.stat('a/data.json')).contentType).toBe('application/vnd.acme+json');
+      expect((await disk.stat('a/data.json')).contentType).toBe('application/vnd.example+json');
     });
 
     it('stores an empty file', async () => {
@@ -306,12 +306,12 @@ describe.each(disks)('%s', (name, create) => {
     });
 
     it('copies content and metadata', async () => {
-      await disk.put('src/a.bin', 'payload', { contentType: 'application/x-acme', metadata: { owner: 'u1' } });
+      await disk.put('src/a.bin', 'payload', { contentType: 'application/x-example', metadata: { owner: 'u1' } });
       const result = await disk.copy('src/a.bin', 'dst/nested/a.bin');
 
-      expect(result).toMatchObject({ key: 'dst/nested/a.bin', size: 7, contentType: 'application/x-acme' });
+      expect(result).toMatchObject({ key: 'dst/nested/a.bin', size: 7, contentType: 'application/x-example' });
       expect(await disk.getText('dst/nested/a.bin')).toBe('payload');
-      expect(await disk.stat('dst/nested/a.bin')).toMatchObject({ contentType: 'application/x-acme', metadata: { owner: 'u1' } });
+      expect(await disk.stat('dst/nested/a.bin')).toMatchObject({ contentType: 'application/x-example', metadata: { owner: 'u1' } });
       expect(await disk.exists('src/a.bin')).toBe(true);
       await expect(disk.copy('src/missing', 'dst/x')).rejects.toMatchObject({ key: 'src/missing', status: 404 });
     });
@@ -437,14 +437,14 @@ describe.each(disks)('%s', (name, create) => {
     });
 
     it('builds public URLs under publicUrl, with each segment encoded', () => {
-      expect(disk.url('covers/a b/ż.jpg')).toBe('https://cdn.acme.example/assets/covers/a%20b/%C5%BC.jpg');
+      expect(disk.url('photos/a b/ż.jpg')).toBe('https://cdn.example.com/assets/photos/a%20b/%C5%BC.jpg');
     });
   });
 
   if (!name.startsWith('S3Disk')) {
     it('signs app-served URLs that verifySignedUrl() accepts', async () => {
       const url = await disk.signedUrl('invoices/2026/INV-7.pdf', { expiresIn: '5m', filename: 'Faktura ż.pdf' });
-      expect(url.startsWith('https://api.acme.example/files?key=invoices%2F2026%2FINV-7.pdf&expires=')).toBe(true);
+      expect(url.startsWith('https://api.example.com/files?key=invoices%2F2026%2FINV-7.pdf&expires=')).toBe(true);
 
       const claims = disk.verifySignedUrl(url);
       expect(claims).toMatchObject({

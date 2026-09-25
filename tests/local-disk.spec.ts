@@ -31,9 +31,9 @@ describe('LocalDisk', () => {
   });
 
   it('writes plain files under the root', async () => {
-    await disk.put('covers/2026/b1.jpg', 'jpeg');
-    expect(readFileSync(join(root, 'covers', '2026', 'b1.jpg'), 'utf8')).toBe('jpeg');
-    expect(disk.path('covers/2026/b1.jpg')).toBe(join(disk['realRoot' as never] as string, 'covers', '2026', 'b1.jpg'));
+    await disk.put('photos/2026/p1.jpg', 'jpeg');
+    expect(readFileSync(join(root, 'photos', '2026', 'p1.jpg'), 'utf8')).toBe('jpeg');
+    expect(disk.path('photos/2026/p1.jpg')).toBe(join(disk['realRoot' as never] as string, 'photos', '2026', 'p1.jpg'));
   });
 
   describe('confinement', () => {
@@ -171,9 +171,9 @@ describe('LocalDisk', () => {
     });
 
     it.runIf(process.platform === 'darwin')('keys that differ only in case are one file on a case-insensitive file system', async () => {
-      await disk.put('Cover.jpg', 'upper');
-      await disk.put('cover.jpg', 'lower');
-      expect(await disk.getText('Cover.jpg')).toBe('lower');
+      await disk.put('Photo.jpg', 'upper');
+      await disk.put('photo.jpg', 'lower');
+      expect(await disk.getText('Photo.jpg')).toBe('lower');
     });
   });
 
@@ -181,7 +181,7 @@ describe('LocalDisk', () => {
     it('keeps only what the extension does not imply', async () => {
       await disk.put('plain.pdf', 'x');
       expect(readdirSync(join(root, '.nest-storage', 'meta'))).toEqual([]);
-      await disk.put('typed.bin', 'x', { contentType: 'application/x-acme' });
+      await disk.put('typed.bin', 'x', { contentType: 'application/x-example' });
       expect(readdirSync(join(root, '.nest-storage', 'meta'))).toHaveLength(1);
       await disk.delete('typed.bin');
       expect(readdirSync(join(root, '.nest-storage', 'meta'))).toEqual([]);

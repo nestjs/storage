@@ -17,9 +17,9 @@ import {
 } from '../lib/index.js';
 
 @Injectable()
-class CoversService {
+class PhotosService {
   constructor(
-    @InjectDisk('covers') readonly covers: StorageDisk,
+    @InjectDisk('photos') readonly photos: StorageDisk,
     @InjectDisk() readonly fallback: StorageDisk,
     readonly byType: StorageDisk,
     readonly storage: Storage,
@@ -38,11 +38,11 @@ class ArchiveController {
 }
 
 /** A feature module that doesn't import StorageModule: it is global. */
-@Module({ providers: [CoversService], exports: [CoversService] })
-class CoversModule {}
+@Module({ providers: [PhotosService], exports: [PhotosService] })
+class PhotosModule {}
 
 const CONFIG = Symbol('CONFIG');
-@Module({ providers: [{ provide: CONFIG, useValue: { bucketName: 'acme-invoices' } }], exports: [CONFIG] })
+@Module({ providers: [{ provide: CONFIG, useValue: { bucketName: 'shop-invoices' } }], exports: [CONFIG] })
 class ConfigModule {}
 
 /** A disk class Nest instantiates, injecting configuration. */
@@ -62,22 +62,22 @@ const compile = (imports: unknown[], providers: unknown[] = [], controllers: unk
 
 describe('StorageModule', () => {
   it('forRoot(): named disks, a default, and injection by name, by type and through Storage', async () => {
-    const covers = new InMemoryDisk();
+    const photos = new InMemoryDisk();
     const invoices = new InMemoryDisk();
-    const moduleRef = await compile([StorageModule.forRoot({ default: 'invoices', disks: { covers, invoices } }), CoversModule], [InvoicesService]);
+    const moduleRef = await compile([StorageModule.forRoot({ default: 'invoices', disks: { photos, invoices } }), PhotosModule], [InvoicesService]);
     await moduleRef.init();
 
-    const service = moduleRef.get(CoversService);
-    expect(service.covers).toBe(covers);
+    const service = moduleRef.get(PhotosService);
+    expect(service.photos).toBe(photos);
     expect(service.fallback).toBe(invoices);
     expect(service.byType).toBe(invoices);
-    expect(service.storage.disk('covers')).toBe(covers);
+    expect(service.storage.disk('photos')).toBe(photos);
     expect(service.storage.disk()).toBe(invoices);
     expect(service.storage.defaultDisk).toBe('invoices');
-    expect(service.storage.names()).toEqual(['covers', 'invoices']);
+    expect(service.storage.names()).toEqual(['photos', 'invoices']);
     expect(moduleRef.get(InvoicesService).invoices).toBe(invoices);
-    expect(moduleRef.get(getDiskToken('covers'))).toBe(covers);
-    expect(() => service.storage.disk('nope')).toThrow('No disk named "nope". Configured disks: covers, invoices');
+    expect(moduleRef.get(getDiskToken('photos'))).toBe(photos);
+    expect(() => service.storage.disk('nope')).toThrow('No disk named "nope". Configured disks: photos, invoices');
 
     await moduleRef.close();
   });
@@ -89,27 +89,27 @@ describe('StorageModule', () => {
   });
 
   it('forRootAsync(): disk instances from the factory, a class at the top level', async () => {
-    const covers = new InMemoryDisk();
+    const photos = new InMemoryDisk();
     const moduleRef = await compile([
       StorageModule.forRootAsync({
         imports: [ConfigModule],
         disks: { invoices: ConfiguredDisk },
         inject: [CONFIG],
         useFactory: (config: { bucketName: string }): StorageModuleOptions => ({
-          default: config.bucketName === 'acme-invoices' ? 'covers' : 'invoices',
-          disks: { covers },
+          default: config.bucketName === 'shop-invoices' ? 'photos' : 'invoices',
+          disks: { photos },
         }),
       }),
-      CoversModule,
+      PhotosModule,
     ], [InvoicesService]);
     await moduleRef.init();
 
     const invoices = moduleRef.get(InvoicesService).invoices;
     expect(invoices).toBeInstanceOf(ConfiguredDisk);
-    expect((invoices as ConfiguredDisk).config.bucketName).toBe('acme-invoices');
+    expect((invoices as ConfiguredDisk).config.bucketName).toBe('shop-invoices');
     // Names that only the factory knows still resolve through @InjectDisk()
-    expect(moduleRef.get(CoversService).covers).toBe(covers);
-    expect(moduleRef.get(StorageDisk)).toBe(covers);
+    expect(moduleRef.get(PhotosService).photos).toBe(photos);
+    expect(moduleRef.get(StorageDisk)).toBe(photos);
 
     await moduleRef.close();
     expect((invoices as ConfiguredDisk).closed).toBe(1);
@@ -119,12 +119,12 @@ describe('StorageModule', () => {
     @Injectable()
     class StorageConfig implements StorageOptionsFactory {
       createStorageOptions(): StorageModuleOptions {
-        return { disks: { covers: new InMemoryDisk() } };
+        return { disks: { photos: new InMemoryDisk() } };
       }
     }
 
-    const moduleRef = await compile([StorageModule.forRootAsync({ useClass: StorageConfig }), CoversModule]);
-    expect(moduleRef.get(CoversService).covers).toBeInstanceOf(InMemoryDisk);
+    const moduleRef = await compile([StorageModule.forRootAsync({ useClass: StorageConfig }), PhotosModule]);
+    expect(moduleRef.get(PhotosService).photos).toBeInstanceOf(InMemoryDisk);
   });
 
   it('closes each disk once on shutdown, even when it has two names', async () => {
@@ -142,15 +142,15 @@ describe('StorageModule', () => {
     const memory = new InMemoryDisk();
     const moduleRef = await Test.createTestingModule({
       imports: [
-        StorageModule.forRootAsync({ useFactory: () => ({ disks: { covers: new InMemoryDisk() } }) }),
-        CoversModule,
+        StorageModule.forRootAsync({ useFactory: () => ({ disks: { photos: new InMemoryDisk() } }) }),
+        PhotosModule,
       ],
     })
       .overrideProvider(STORAGE_MODULE_OPTIONS)
-      .useValue({ disks: { covers: memory } })
+      .useValue({ disks: { photos: memory } })
       .compile();
 
-    expect(moduleRef.get(CoversService).covers).toBe(memory);
+    expect(moduleRef.get(PhotosService).photos).toBe(memory);
   });
 
   describe('fails at startup', () => {
@@ -161,12 +161,12 @@ describe('StorageModule', () => {
     };
 
     it('naming the class that injects a disk no configuration provides', async () => {
-      const message = await failure(boot([StorageModule.forRoot({ default: 'covers', disks: { covers: new InMemoryDisk() } })], [], [ArchiveController]));
+      const message = await failure(boot([StorageModule.forRoot({ default: 'photos', disks: { photos: new InMemoryDisk() } })], [], [ArchiveController]));
       expect(message).toBe(
-        `ArchiveController injects the disk "archive" (@InjectDisk('archive')), but StorageModule has no disk by that name. Configured disks: covers.`,
+        `ArchiveController injects the disk "archive" (@InjectDisk('archive')), but StorageModule has no disk by that name. Configured disks: photos.`,
       );
 
-      const property = await failure(boot([StorageModule.forRootAsync({ useFactory: () => ({ disks: { covers: new InMemoryDisk() } }) })], [InvoicesService]));
+      const property = await failure(boot([StorageModule.forRootAsync({ useFactory: () => ({ disks: { photos: new InMemoryDisk() } }) })], [InvoicesService]));
       expect(property).toContain(`InvoicesService injects the disk "invoices"`);
     });
 

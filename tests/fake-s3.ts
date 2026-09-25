@@ -58,7 +58,7 @@ interface Fault {
 export class FakeS3 {
   readonly objects = new Map<string, StoredObject>();
   readonly uploads = new Map<string, Upload>();
-  readonly buckets = new Set<string>(['acme']);
+  readonly buckets = new Set<string>(['shop']);
   readonly requests: LoggedRequest[] = [];
   readonly signatureFailures: string[] = [];
   private faults: Fault[] = [];
@@ -111,7 +111,7 @@ export class FakeS3 {
     this.sessionToken = undefined;
   }
 
-  object(key: string, bucket = 'acme') {
+  object(key: string, bucket = 'shop') {
     return this.objects.get(`${bucket}/${key}`);
   }
 

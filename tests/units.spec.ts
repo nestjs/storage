@@ -40,19 +40,19 @@ describe('contentDisposition()', () => {
 
 describe('app-served signed URLs', () => {
   const keys = ['a'.repeat(32), 'b'.repeat(32)];
-  const signer = new InMemoryDisk({ signedUrls: { baseUrl: 'https://api.acme.example/files', keys } });
+  const signer = new InMemoryDisk({ signedUrls: { baseUrl: 'https://api.example.com/files', keys } });
 
   it('verifies with any key, signs with the first (rotation)', async () => {
-    const old = new InMemoryDisk({ signedUrls: { baseUrl: 'https://api.acme.example/files', keys: [keys[1]] } });
+    const old = new InMemoryDisk({ signedUrls: { baseUrl: 'https://api.example.com/files', keys: [keys[1]] } });
     const url = await old.signedUrl('a.txt');
     expect(signer.verifySignedUrl(url).key).toBe('a.txt');
 
-    const retired = new InMemoryDisk({ signedUrls: { baseUrl: 'https://api.acme.example/files', keys: ['c'.repeat(32)] } });
+    const retired = new InMemoryDisk({ signedUrls: { baseUrl: 'https://api.example.com/files', keys: ['c'.repeat(32)] } });
     expect(() => retired.verifySignedUrl(url)).toThrow(StorageSignedUrlError);
   });
 
   it('binds a URL to the route it was issued for: another disk with the same keys refuses it', async () => {
-    const archive = new InMemoryDisk({ signedUrls: { baseUrl: 'https://api.acme.example/archive', keys } });
+    const archive = new InMemoryDisk({ signedUrls: { baseUrl: 'https://api.example.com/archive', keys } });
     const url = await signer.signedUrl('invoices/1.pdf');
 
     const error = (() => {
