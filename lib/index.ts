@@ -16,7 +16,6 @@ export * from './decorators/index.js';
 export { StorageDisk } from './disks/storage.disk.js';
 export { LocalDisk } from './disks/local.disk.js';
 export { InMemoryDisk } from './disks/in-memory.disk.js';
-// Would be a subpath export (`@nestjs/storage/s3`) in a real package
 export { S3Disk } from './s3/s3.disk.js';
 export type {
   InMemoryDiskOptions,
