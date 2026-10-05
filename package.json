@@ -42,7 +42,7 @@
     "@nestjs/platform-express": "12.1.2",
     "@nestjs/platform-fastify": "12.1.2",
     "@nestjs/testing": "12.1.2",
-    "@types/node": "24.13.6",
+    "@types/node": "24.19.1",
     "@types/supertest": "6.0.3",
     "husky": "9.1.7",
     "lint-staged": "17.5.1",
