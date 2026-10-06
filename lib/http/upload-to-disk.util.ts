@@ -13,6 +13,7 @@ import type { StorageDisk } from '../disks/storage.disk.js';
 import { storageForRequest } from './app-registry.util.js';
 
 const DEFAULT_CONTENT_TYPE_SAMPLE_BYTES = 4 * 1024;
+const MIN_CONTENT_TYPE_SAMPLE_BYTES = 1;
 const MAX_CONTENT_TYPE_SAMPLE_BYTES = 64 * 1024;
 
 /**
@@ -61,12 +62,12 @@ export function uploadToDisk(options: UploadToDiskOptions = {}): UploadStorageEn
   if (
     options.contentTypeSampleBytes !== undefined &&
     (!Number.isSafeInteger(contentTypeSampleBytes) ||
-      contentTypeSampleBytes < SNIFF_BYTES ||
+      contentTypeSampleBytes < MIN_CONTENT_TYPE_SAMPLE_BYTES ||
       contentTypeSampleBytes > MAX_CONTENT_TYPE_SAMPLE_BYTES)
   ) {
     throw new TypeError(
       'uploadToDisk(): `contentTypeSampleBytes` must be a whole number between ' +
-        `${SNIFF_BYTES} and ${MAX_CONTENT_TYPE_SAMPLE_BYTES}`,
+        `${MIN_CONTENT_TYPE_SAMPLE_BYTES} and ${MAX_CONTENT_TYPE_SAMPLE_BYTES}`,
     );
   }
 

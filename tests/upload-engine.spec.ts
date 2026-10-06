@@ -93,6 +93,30 @@ describe('uploadToDisk() engine', () => {
     expect(await disk.getBuffer('reports/import.csv')).toEqual(body);
   });
 
+  it('allows a one-byte sample for custom content type detection', async () => {
+    const body = Buffer.from('not a known signature');
+    let receivedBytes: Buffer | undefined;
+    const engine = uploadToDisk({
+      disk,
+      contentTypes: ['text/csv'],
+      contentTypeSampleBytes: 1,
+      key: () => 'detected.csv',
+      detectContentType: (bytes) => {
+        receivedBytes = bytes;
+        return 'text/csv';
+      },
+    });
+    const stream = new PassThrough();
+    const result = handle(engine, incoming(stream, 'data.csv'));
+    stream.end(body);
+
+    const { error, info } = await result;
+    expect(error).toBeNull();
+    expect(receivedBytes).toEqual(body.subarray(0, 1));
+    expect(info).toMatchObject({ contentType: 'text/csv', key: 'detected.csv' });
+    expect(await disk.getBuffer('detected.csv')).toEqual(body);
+  });
+
   it('keeps signature detection ahead of the custom detector', async () => {
     const detector = vi.fn(() => 'text/csv');
     const engine = uploadToDisk({
@@ -268,9 +292,11 @@ describe('uploadToDisk() engine', () => {
     );
 
     const detectContentType = () => undefined;
-    for (const contentTypeSampleBytes of [15, 16.5, 65_537]) {
+    expect(() => uploadToDisk({ detectContentType, contentTypeSampleBytes: 1 })).not.toThrow();
+    expect(() => uploadToDisk({ detectContentType, contentTypeSampleBytes: 65_536 })).not.toThrow();
+    for (const contentTypeSampleBytes of [0, 1.5, 65_537]) {
       expect(() => uploadToDisk({ detectContentType, contentTypeSampleBytes })).toThrow(
-        'between 16 and 65536',
+        'between 1 and 65536',
       );
     }
   });
