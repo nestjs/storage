@@ -54,6 +54,20 @@ function createController(api: UploadApi) {
       return file;
     }
 
+    @Post('csv-only')
+    @UseInterceptors(
+      api.FileInterceptor('file', {
+        storage: uploadToDisk({
+          contentTypes: ['text/csv'],
+          detectContentType: (bytes) =>
+            bytes.toString('utf8').startsWith('sku,name\n') ? 'text/csv' : undefined,
+        }),
+      }),
+    )
+    csvOnly(@UploadedFile() file: StoredUpload) {
+      return file;
+    }
+
     @Post('bad-key')
     @UseInterceptors(api.FileInterceptor('file', { storage: uploadToDisk({ key: (file) => `../${file.originalname}` }) }))
     badKey() {}
@@ -145,6 +159,31 @@ describe.each(adapters.map((a) => a.name))('uploads on %s', (adapter) => {
 
     await http().post('/pdf-only').attach('file', PDF, { filename: 'a.pdf' }).expect(201);
     expect(uploads.keys()).toEqual(['only.pdf']);
+  });
+
+  it('uses custom detection for CSV and ignores the client MIME type', async () => {
+    const csv = Buffer.from('sku,name\n1,widget\n');
+    const res = await http()
+      .post('/csv-only')
+      .attach('file', csv, { filename: 'data.csv', contentType: 'application/pdf' })
+      .expect(201);
+
+    expect(res.body).toMatchObject({
+      originalname: 'data.csv',
+      mimetype: 'application/pdf',
+      contentType: 'text/csv',
+      size: csv.length,
+      key: expect.stringMatching(/^[0-9a-f-]{36}\.csv$/),
+    });
+    expect(await uploads.getBuffer(res.body.key)).toEqual(csv);
+    expect(await uploads.stat(res.body.key)).toMatchObject({ contentType: 'text/csv' });
+
+    const before = uploads.keys();
+    await http()
+      .post('/csv-only')
+      .attach('file', Buffer.from('unknown'), { filename: 'bad.csv' })
+      .expect(415);
+    expect(uploads.keys()).toEqual(before);
   });
 
   it('a key() that builds an invalid key fails the request, and stores nothing', async () => {

@@ -12,6 +12,9 @@ import { StorageError } from '../errors/storage.error.js';
 import type { StorageDisk } from '../disks/storage.disk.js';
 import { storageForRequest } from './app-registry.util.js';
 
+const DEFAULT_CONTENT_TYPE_SAMPLE_BYTES = 4 * 1024;
+const MAX_CONTENT_TYPE_SAMPLE_BYTES = 64 * 1024;
+
 /**
  * A storage engine for `FileInterceptor()` and friends that streams each upload straight into a
  * disk, on Express (multer) and Fastify (`@nestjs/platform-fastify/multipart`) alike:
@@ -23,7 +26,17 @@ import { storageForRequest } from './app-registry.util.js';
  * }))
  * ```
  *
- * - The type is checked on the file's first bytes, before anything is written.
+ * - The type is checked before anything is written. Signature detection runs first; when it
+ *   cannot identify a type, an optional `detectContentType` callback can classify a bounded
+ *   prefix. A prefix detector does not validate the whole file.
+ * - For a text format such as CSV, opt in with `detectContentType` and allow its returned type:
+ *   ```ts
+ *   uploadToDisk({
+ *     contentTypes: ['text/csv'],
+ *     detectContentType: (bytes) =>
+ *       bytes.toString('utf8').startsWith('sku,name\n') ? 'text/csv' : undefined,
+ *   });
+ *   ```
  * - A file over `limits.fileSize` is refused with a 413, and nothing is written: a truncated
  *   upload never becomes visible, and never replaces the file at its key.
  * - When the request fails after a file was stored (another file too large, a missing
@@ -36,6 +49,25 @@ export function uploadToDisk(options: UploadToDiskOptions = {}): UploadStorageEn
   const allowed = options.contentTypes;
   if (allowed !== undefined && (!Array.isArray(allowed) || allowed.length === 0)) {
     throw new TypeError('uploadToDisk(): `contentTypes` must be a non-empty array');
+  }
+  if (options.detectContentType !== undefined && typeof options.detectContentType !== 'function') {
+    throw new TypeError('uploadToDisk(): `detectContentType` must be a function');
+  }
+  if (options.contentTypeSampleBytes !== undefined && options.detectContentType === undefined) {
+    throw new TypeError('uploadToDisk(): `contentTypeSampleBytes` requires `detectContentType`');
+  }
+  const contentTypeSampleBytes =
+    options.contentTypeSampleBytes ?? DEFAULT_CONTENT_TYPE_SAMPLE_BYTES;
+  if (
+    options.contentTypeSampleBytes !== undefined &&
+    (!Number.isSafeInteger(contentTypeSampleBytes) ||
+      contentTypeSampleBytes < SNIFF_BYTES ||
+      contentTypeSampleBytes > MAX_CONTENT_TYPE_SAMPLE_BYTES)
+  ) {
+    throw new TypeError(
+      'uploadToDisk(): `contentTypeSampleBytes` must be a whole number between ' +
+        `${SNIFF_BYTES} and ${MAX_CONTENT_TYPE_SAMPLE_BYTES}`,
+    );
   }
 
   const diskName = typeof options.disk === 'string' ? options.disk : undefined;
@@ -79,7 +111,30 @@ export function uploadToDisk(options: UploadToDiskOptions = {}): UploadStorageEn
           headLength += next.value.length;
         }
 
-        const detected = detectContentType(Buffer.concat(head));
+        let detected = detectContentType(Buffer.concat(head));
+        if (detected === undefined && options.detectContentType) {
+          while (headLength < contentTypeSampleBytes && !ended) {
+            const next = await source.next();
+            if (next.done) {
+              ended = true;
+              break;
+            }
+            head.push(next.value);
+            headLength += next.value.length;
+          }
+
+          const fileInfo: UploadFileInfo = {
+            fieldname: file.fieldname,
+            originalname: file.originalname,
+            mimetype: file.mimetype,
+            contentType: undefined,
+            extension: '',
+          };
+          detected = await options.detectContentType(
+            Buffer.concat(head).subarray(0, contentTypeSampleBytes),
+            fileInfo,
+          );
+        }
         if (allowed && (detected === undefined || !allowed.includes(detected))) {
           throw new UnsupportedMediaTypeException(`File type not allowed. Allowed types: ${allowed.join(', ')}`);
         }

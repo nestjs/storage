@@ -65,6 +65,7 @@ export const EXTENSION_BY_TYPE: Record<string, string> = {
   'image/avif': '.avif',
   'image/heic': '.heic',
   'application/pdf': '.pdf',
+  'text/csv': '.csv',
 };
 
 /** How many leading bytes `detectContentType()` needs to recognize every format it knows. */

@@ -15,8 +15,8 @@ import { InMemoryDisk, type StoredUpload, type UploadStorageEngine, uploadToDisk
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
 
-function incoming(stream: PassThrough, originalname = 'a.png') {
-  const file = { fieldname: 'file', originalname, encoding: '7bit', mimetype: 'image/png' };
+function incoming(stream: PassThrough, originalname = 'a.png', mimetype = 'image/png') {
+  const file = { fieldname: 'file', originalname, encoding: '7bit', mimetype };
   Object.defineProperty(file, 'stream', { value: stream, enumerable: false });
   return file as typeof file & { stream: PassThrough };
 }
@@ -46,6 +46,108 @@ describe('uploadToDisk() engine', () => {
     expect(error).toBeNull();
     expect(info).toEqual({ key: 'k.png', disk: undefined, size: 116, contentType: 'image/png', etag: expect.any(String) });
     expect((await disk.getBuffer('k.png')).length).toBe(116);
+  });
+
+  it('uses an async custom detector for unknown types and limits its byte sample', async () => {
+    const body = Buffer.from('sku,name\n1,widget\n'.padEnd(80, 'x'));
+    let receivedBytes: Buffer | undefined;
+    let receivedFile:
+      | {
+          contentType: string | undefined;
+          extension: string;
+          originalname: string;
+          mimetype: string;
+        }
+      | undefined;
+    const engine = uploadToDisk({
+      disk,
+      contentTypes: ['text/csv'],
+      contentTypeSampleBytes: 24,
+      detectContentType: async (bytes, file) => {
+        receivedBytes = bytes;
+        receivedFile = file;
+        return bytes.toString('utf8').startsWith('sku,name\n') ? 'text/csv' : undefined;
+      },
+      key: (file) => `reports/import${file.extension}`,
+    });
+    const stream = new PassThrough();
+    const result = handle(engine, incoming(stream, 'import.csv', 'application/pdf'));
+
+    stream.write(body.subarray(0, 7));
+    stream.end(body.subarray(7));
+
+    const { error, info } = await result;
+    expect(error).toBeNull();
+    expect(receivedBytes).toEqual(body.subarray(0, 24));
+    expect(receivedFile).toMatchObject({
+      contentType: undefined,
+      extension: '',
+      originalname: 'import.csv',
+      mimetype: 'application/pdf',
+    });
+    expect(info).toMatchObject({
+      key: 'reports/import.csv',
+      size: body.length,
+      contentType: 'text/csv',
+    });
+    expect(await disk.getBuffer('reports/import.csv')).toEqual(body);
+  });
+
+  it('keeps signature detection ahead of the custom detector', async () => {
+    const detector = vi.fn(() => 'text/csv');
+    const engine = uploadToDisk({
+      disk,
+      detectContentType: detector,
+      contentTypes: ['application/pdf'],
+    });
+    const stream = new PassThrough();
+    const result = handle(engine, incoming(stream));
+    stream.end(Buffer.from('%PDF-1.7\n'));
+
+    const { error, info } = await result;
+    expect(error).toBeNull();
+    expect(detector).not.toHaveBeenCalled();
+    expect(info).toMatchObject({
+      contentType: 'application/pdf',
+      key: expect.stringMatching(/\.pdf$/),
+    });
+  });
+
+  it('rejects an unknown result against the allow-list without writing', async () => {
+    const engine = uploadToDisk({
+      disk,
+      contentTypes: ['text/csv'],
+      detectContentType: () => undefined,
+    });
+    const stream = new PassThrough();
+    const result = handle(engine, incoming(stream, 'data.csv'));
+    stream.end(Buffer.from('not recognized'));
+
+    const { error } = await result;
+    expect(error.getStatus()).toBe(415);
+    expect(disk.keys()).toEqual([]);
+  });
+
+  it('does not write and drains the stream when a custom detector throws', async () => {
+    const failure = new Error('detector failed');
+    const engine = uploadToDisk({
+      disk,
+      contentTypeSampleBytes: 16,
+      detectContentType: async () => Promise.reject(failure),
+    });
+    const stream = new PassThrough();
+    const result = handle(engine, incoming(stream, 'data.csv'));
+    stream.write(Buffer.from('unrecognized prefix'));
+
+    const { error } = await result;
+    expect(error).toBe(failure);
+
+    const closed = new Promise<void>((resolve) => stream.once('close', resolve));
+    stream.end(Buffer.alloc(100_000));
+    await closed;
+    expect(stream.readableEnded).toBe(true);
+    expect(stream.errored).toBeNull();
+    expect(disk.keys()).toEqual([]);
   });
 
   it('stores nothing when the client vanishes (the stream closes without ending or an error)', async () => {
@@ -161,5 +263,15 @@ describe('uploadToDisk() engine', () => {
 
   it('validates its options when it is created', () => {
     expect(() => uploadToDisk({ contentTypes: [] })).toThrow('`contentTypes` must be a non-empty array');
+    expect(() => uploadToDisk({ contentTypeSampleBytes: 16 })).toThrow(
+      'requires `detectContentType`',
+    );
+
+    const detectContentType = () => undefined;
+    for (const contentTypeSampleBytes of [15, 16.5, 65_537]) {
+      expect(() => uploadToDisk({ detectContentType, contentTypeSampleBytes })).toThrow(
+        'between 16 and 65536',
+      );
+    }
   });
 });
