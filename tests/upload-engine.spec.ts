@@ -137,6 +137,23 @@ describe('uploadToDisk() engine', () => {
     });
   });
 
+  it('does not let a custom detector reclassify a known type outside the allow-list', async () => {
+    const detector = vi.fn(() => 'text/csv');
+    const engine = uploadToDisk({
+      disk,
+      contentTypes: ['text/csv'],
+      detectContentType: detector,
+    });
+    const stream = new PassThrough();
+    const result = handle(engine, incoming(stream, 'data.csv', 'text/csv'));
+    stream.end(Buffer.from('%PDF-1.7\n'));
+
+    const { error } = await result;
+    expect(error.getStatus()).toBe(415);
+    expect(detector).not.toHaveBeenCalled();
+    expect(disk.keys()).toEqual([]);
+  });
+
   it('rejects an unknown result against the allow-list without writing', async () => {
     const engine = uploadToDisk({
       disk,
