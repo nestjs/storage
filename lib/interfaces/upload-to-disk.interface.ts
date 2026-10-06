@@ -58,7 +58,7 @@ export interface UploadToDiskOptions {
   ) => string | undefined | Promise<string | undefined>;
   /**
    * Maximum prefix size passed to `detectContentType`. Defaults to 4 KiB; must be a whole
-   * number between 16 bytes and 64 KiB. This option requires `detectContentType`.
+   * number between 1 byte and 64 KiB. This option requires `detectContentType`.
    */
   contentTypeSampleBytes?: number;
   cacheControl?: string;
