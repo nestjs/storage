@@ -7,9 +7,9 @@ export interface UploadFileInfo {
   originalname: string;
   /** The client's declared type. Untrusted. */
   mimetype: string;
-  /** The type detected from the first bytes (JPEG, PNG, GIF, WebP, AVIF, HEIC, PDF), if any. */
+  /** The type detected from the file bytes by built-in or custom detection, if any. */
   contentType: string | undefined;
-  /** The usual extension for `contentType` (`.jpg`), or `''`. */
+  /** The usual extension for `contentType` (`.jpg`), or `''` when it has no known mapping. */
   extension: string;
 }
 
@@ -40,10 +40,32 @@ export interface UploadToDiskOptions {
    */
   key?: (file: UploadFileInfo, req: any) => string | Promise<string>;
   /**
-   * Accept only these types, detected from the file's first bytes (see `detectContentType()`).
-   * Anything else is refused with a 415 before a byte is written.
+   * Accept only these types, detected from the file's bytes: JPEG, PNG, GIF, WebP, AVIF, HEIC
+   * and PDF by their signature (see `detectContentType()`), anything else through the
+   * `detectContentType` option. Types match without their parameters (`text/csv` allows
+   * `text/csv; charset=utf-8`). Anything else is refused with a 415 before a byte is written.
    */
   contentTypes?: string[];
+  /**
+   * Optional fallback for file types without a recognizable signature. It runs only when the
+   * built-in `detectContentType()` returns `undefined`, so passing that function here does
+   * nothing. It receives at most `contentTypeSampleBytes` from
+   * the start of the file. This classifies a prefix; it does not validate the whole file.
+   * `file` contains client-provided values such as `originalname` and `mimetype`, which are
+   * untrusted. Its `contentType` is `undefined` and `extension` is `''` during this callback.
+   * Return the detected content type, with its charset for text (`text/csv; charset=utf-8`):
+   * it is the type the file is stored and served with. Return `undefined` when the type is
+   * unknown. The upload waits for it while holding the request, so it must settle promptly.
+   */
+  detectContentType?: (
+    bytes: Buffer,
+    file: UploadFileInfo,
+  ) => string | undefined | Promise<string | undefined>;
+  /**
+   * Maximum prefix size passed to `detectContentType`. Defaults to 4 KiB; must be a whole
+   * number between 1 byte and 64 KiB. This option requires `detectContentType`.
+   */
+  contentTypeSampleBytes?: number;
   cacheControl?: string;
   metadata?: (file: UploadFileInfo, req: any) => Record<string, string>;
 }
