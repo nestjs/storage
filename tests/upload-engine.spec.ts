@@ -169,6 +169,66 @@ describe('uploadToDisk() engine', () => {
     expect(disk.keys()).toEqual([]);
   });
 
+  it('matches a detected type with parameters against the allow-list and stores it whole', async () => {
+    const engine = uploadToDisk({
+      disk,
+      contentTypes: ['text/csv'],
+      detectContentType: () => 'text/csv; charset=utf-8',
+    });
+    const stream = new PassThrough();
+    const result = handle(engine, incoming(stream, 'data.csv'));
+    stream.end(Buffer.from('sku,name\n1,widget\n'));
+
+    const { error, info } = await result;
+    expect(error).toBeNull();
+    expect(info).toMatchObject({
+      contentType: 'text/csv; charset=utf-8',
+      key: expect.stringMatching(/\.csv$/),
+    });
+  });
+
+  it('stores the custom detector type when there is no allow-list', async () => {
+    const engine = uploadToDisk({ disk, detectContentType: () => 'application/json' });
+    const stream = new PassThrough();
+    const result = handle(engine, incoming(stream, 'data.json'));
+    stream.end(Buffer.from('{"sku":1}'));
+
+    const { error, info } = await result;
+    expect(error).toBeNull();
+    expect(info).toMatchObject({
+      contentType: 'application/json',
+      key: expect.stringMatching(/\.json$/),
+    });
+    expect(await disk.getBuffer(info.key)).toEqual(Buffer.from('{"sku":1}'));
+  });
+
+  it('rejects a custom detector type outside the allow-list without writing', async () => {
+    const engine = uploadToDisk({
+      disk,
+      contentTypes: ['text/csv'],
+      detectContentType: () => 'text/html',
+    });
+    const stream = new PassThrough();
+    const result = handle(engine, incoming(stream, 'data.csv'));
+    stream.end(Buffer.from('<script>alert(1)</script>'));
+
+    const { error } = await result;
+    expect(error.getStatus()).toBe(415);
+    expect(disk.keys()).toEqual([]);
+  });
+
+  it('fails clearly when a custom detector returns an empty type', async () => {
+    const engine = uploadToDisk({ disk, detectContentType: () => ' ' });
+    const stream = new PassThrough();
+    const result = handle(engine, incoming(stream, 'data.csv'));
+    stream.end(Buffer.from('not recognized'));
+
+    const { error } = await result;
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error.message).toContain('`detectContentType` must return a content type');
+    expect(disk.keys()).toEqual([]);
+  });
+
   it('does not write and drains the stream when a custom detector throws', async () => {
     const failure = new Error('detector failed');
     const engine = uploadToDisk({

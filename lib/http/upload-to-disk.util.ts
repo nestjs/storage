@@ -7,7 +7,13 @@ import type {
 import { randomUUID } from 'node:crypto';
 import type { Readable } from 'node:stream';
 import { PayloadTooLargeException, UnsupportedMediaTypeException } from '@nestjs/common';
-import { DEFAULT_CONTENT_TYPE, detectContentType, EXTENSION_BY_TYPE, SNIFF_BYTES } from '../utils/content-type.util.js';
+import {
+  contentTypeEssence,
+  DEFAULT_CONTENT_TYPE,
+  detectContentType,
+  extensionForContentType,
+  SNIFF_BYTES,
+} from '../utils/content-type.util.js';
 import { StorageError } from '../errors/storage.error.js';
 import type { StorageDisk } from '../disks/storage.disk.js';
 import { storageForRequest } from './app-registry.util.js';
@@ -35,7 +41,7 @@ const MAX_CONTENT_TYPE_SAMPLE_BYTES = 64 * 1024;
  *   uploadToDisk({
  *     contentTypes: ['text/csv'],
  *     detectContentType: (bytes) =>
- *       bytes.toString('utf8').startsWith('sku,name\n') ? 'text/csv' : undefined,
+ *       bytes.toString('utf8').startsWith('sku,name\n') ? 'text/csv; charset=utf-8' : undefined,
  *   });
  *   ```
  * - A file over `limits.fileSize` is refused with a 413, and nothing is written: a truncated
@@ -51,6 +57,7 @@ export function uploadToDisk(options: UploadToDiskOptions = {}): UploadStorageEn
   if (allowed !== undefined && (!Array.isArray(allowed) || allowed.length === 0)) {
     throw new TypeError('uploadToDisk(): `contentTypes` must be a non-empty array');
   }
+  const allowedEssences = allowed?.map(contentTypeEssence);
   if (options.detectContentType !== undefined && typeof options.detectContentType !== 'function') {
     throw new TypeError('uploadToDisk(): `detectContentType` must be a function');
   }
@@ -102,51 +109,41 @@ export function uploadToDisk(options: UploadToDiskOptions = {}): UploadStorageEn
         const head: Buffer[] = [];
         let headLength = 0;
         let ended = false;
-        while (headLength < SNIFF_BYTES) {
-          const next = await source.next();
-          if (next.done) {
-            ended = true;
-            break;
-          }
-          head.push(next.value);
-          headLength += next.value.length;
-        }
-
-        let detected = detectContentType(Buffer.concat(head));
-        if (detected === undefined && options.detectContentType) {
-          while (headLength < contentTypeSampleBytes && !ended) {
+        const readHead = async (target: number) => {
+          while (!ended && headLength < target) {
             const next = await source.next();
             if (next.done) {
               ended = true;
-              break;
+            } else {
+              head.push(next.value);
+              headLength += next.value.length;
             }
-            head.push(next.value);
-            headLength += next.value.length;
           }
+        };
 
-          const fileInfo: UploadFileInfo = {
-            fieldname: file.fieldname,
-            originalname: file.originalname,
-            mimetype: file.mimetype,
+        const sampleBytes = options.detectContentType
+          ? Math.max(SNIFF_BYTES, contentTypeSampleBytes)
+          : SNIFF_BYTES;
+        await readHead(sampleBytes);
+        const sample = Buffer.concat(head, Math.min(headLength, sampleBytes));
+
+        const declared = { fieldname: file.fieldname, originalname: file.originalname, mimetype: file.mimetype };
+        let detected = detectContentType(sample.subarray(0, SNIFF_BYTES));
+        if (detected === undefined && options.detectContentType) {
+          detected = await options.detectContentType(sample.subarray(0, contentTypeSampleBytes), {
+            ...declared,
             contentType: undefined,
             extension: '',
-          };
-          detected = await options.detectContentType(
-            Buffer.concat(head).subarray(0, contentTypeSampleBytes),
-            fileInfo,
-          );
+          });
+          if (detected !== undefined && (typeof detected !== 'string' || detected.trim() === '')) {
+            throw new TypeError('uploadToDisk(): `detectContentType` must return a content type or undefined');
+          }
         }
-        if (allowed && (detected === undefined || !allowed.includes(detected))) {
+        if (allowed && (detected === undefined || !allowedEssences!.includes(contentTypeEssence(detected)))) {
           throw new UnsupportedMediaTypeException(`File type not allowed. Allowed types: ${allowed.join(', ')}`);
         }
 
-        const info: UploadFileInfo = {
-          fieldname: file.fieldname,
-          originalname: file.originalname,
-          mimetype: file.mimetype,
-          contentType: detected,
-          extension: detected ? (EXTENSION_BY_TYPE[detected] ?? '') : '',
-        };
+        const info: UploadFileInfo = { ...declared, contentType: detected, extension: extensionForContentType(detected) };
         const key = options.key ? await options.key(info, req) : `${randomUUID()}${info.extension}`;
 
         const body = async function* () {

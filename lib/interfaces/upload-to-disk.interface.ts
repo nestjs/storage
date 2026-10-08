@@ -40,17 +40,22 @@ export interface UploadToDiskOptions {
    */
   key?: (file: UploadFileInfo, req: any) => string | Promise<string>;
   /**
-   * Accept only these types, detected from the file's bytes. Anything else is refused with a
-   * 415 before a byte is written.
+   * Accept only these types, detected from the file's bytes: JPEG, PNG, GIF, WebP, AVIF, HEIC
+   * and PDF by their signature (see `detectContentType()`), anything else through the
+   * `detectContentType` option. Types match without their parameters (`text/csv` allows
+   * `text/csv; charset=utf-8`). Anything else is refused with a 415 before a byte is written.
    */
   contentTypes?: string[];
   /**
    * Optional fallback for file types without a recognizable signature. It runs only when the
-   * built-in detector returns `undefined`, and receives at most `contentTypeSampleBytes` from
+   * built-in `detectContentType()` returns `undefined`, so passing that function here does
+   * nothing. It receives at most `contentTypeSampleBytes` from
    * the start of the file. This classifies a prefix; it does not validate the whole file.
    * `file` contains client-provided values such as `originalname` and `mimetype`, which are
    * untrusted. Its `contentType` is `undefined` and `extension` is `''` during this callback.
-   * Return the detected content type, or `undefined` when the type is unknown.
+   * Return the detected content type, with its charset for text (`text/csv; charset=utf-8`):
+   * it is the type the file is stored and served with. Return `undefined` when the type is
+   * unknown. The upload waits for it while holding the request, so it must settle promptly.
    */
   detectContentType?: (
     bytes: Buffer,

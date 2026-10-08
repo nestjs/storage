@@ -65,8 +65,23 @@ export const EXTENSION_BY_TYPE: Record<string, string> = {
   'image/avif': '.avif',
   'image/heic': '.heic',
   'application/pdf': '.pdf',
-  'text/csv': '.csv',
 };
+
+/** `EXTENSION_BY_TYPE`, plus the first extension `BY_EXTENSION` maps to each other type. */
+const EXTENSION_BY_ESSENCE: Record<string, string> = { ...EXTENSION_BY_TYPE };
+for (const [extension, type] of Object.entries(BY_EXTENSION)) {
+  EXTENSION_BY_ESSENCE[contentTypeEssence(type)] ??= `.${extension}`;
+}
+
+/** A content type without its parameters, lowercased: `text/csv; charset=utf-8` is `text/csv`. */
+export function contentTypeEssence(type: string): string {
+  return type.split(';', 1)[0].trim().toLowerCase();
+}
+
+/** The usual extension for a content type (`.csv` for `text/csv; charset=utf-8`), or `''`. */
+export function extensionForContentType(type: string | undefined): string {
+  return type === undefined ? '' : (EXTENSION_BY_ESSENCE[contentTypeEssence(type)] ?? '');
+}
 
 /** How many leading bytes `detectContentType()` needs to recognize every format it knows. */
 export const SNIFF_BYTES = 16;
