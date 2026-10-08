@@ -199,7 +199,7 @@ describe('uploadToDisk() engine', () => {
       contentType: 'application/json',
       key: expect.stringMatching(/\.json$/),
     });
-    expect(await disk.getBuffer(info.key)).toEqual(Buffer.from('{"sku":1}'));
+    expect(await disk.getBuffer(info!.key!)).toEqual(Buffer.from('{"sku":1}'));
   });
 
   it('rejects a custom detector type outside the allow-list without writing', async () => {
