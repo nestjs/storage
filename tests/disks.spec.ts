@@ -414,6 +414,22 @@ describe.each(disks)('%s', (name, create) => {
       expect(() => disk.url(key)).toThrow(StorageInvalidKeyError);
     });
 
+    it.each(['..a', '..foo/a', '...dots/a', 'docs/..foo/a'])('accepts the key %s, whose segment starts with dots', async (key) => {
+      await disk.put(key, 'x');
+      expect(await disk.getText(key)).toBe('x');
+      expect(await disk.exists(key)).toBe(true);
+      expect((await disk.list({ prefix: key.slice(0, 3) })).entries.map((e) => e.key)).toEqual([key]);
+
+      await disk.copy(key, 'copy.txt');
+      expect(await disk.getText('copy.txt')).toBe('x');
+      await disk.copy('copy.txt', `${key}.copy`);
+      await disk.move(`${key}.copy`, `${key}.moved`);
+      expect(await disk.getText(`${key}.moved`)).toBe('x');
+
+      await disk.delete(key);
+      expect(await disk.exists(key)).toBe(false);
+    });
+
     // A local disk is also bound by its file system's limits (255 bytes a segment, and a
     // path length that macOS caps at 1024 bytes): see local-disk.spec.ts.
     it.skipIf(name === 'LocalDisk')('accepts a 1024-byte key', async () => {

@@ -358,7 +358,9 @@ export class LocalDisk extends StorageDisk {
 
   private inside(real: string): boolean {
     const rel = relative(this.realRoot, real);
-    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel) && !isInternalDir(rel.split(sep)[0]));
+    // A first segment such as ..foo is a valid key: only .. or .. plus a separator leaves the root
+    const leavesRoot = rel === '..' || rel.startsWith(`..${sep}`);
+    return rel === '' || (!leavesRoot && !isAbsolute(rel) && !isInternalDir(rel.split(sep)[0]));
   }
 
   /**
