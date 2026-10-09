@@ -9,6 +9,7 @@ import { StorageFileNotFoundError } from '../errors/storage-file-not-found.error
 import { StorageInvalidKeyError } from '../errors/storage-invalid-key.error.js';
 import { StorageKeyConflictError } from '../errors/storage-key-conflict.error.js';
 import { StorageRangeNotSatisfiableError } from '../errors/storage-range-not-satisfiable.error.js';
+import { StorageError } from '../errors/storage.error.js';
 import { resolveRange, StorageDisk } from './storage.disk.js';
 import type {
   StorageDownload,
@@ -38,6 +39,7 @@ interface Sidecar {
  *
  * - **Atomic writes.** A file is written to a temp file, flushed, then renamed over the key:
  *   readers see the old file or the new one. A failed or aborted write leaves nothing.
+ *   Each chunk is written completely; a write that makes no progress fails before committing.
  * - **Confined to `root`.** Keys can't contain `..`, absolute paths, backslashes or NUL (the
  *   rule every disk applies), the internal `.nest-storage` directory is off limits, and a
  *   symbolic link on the way to a file, or as the file, is refused, so a link placed inside
@@ -91,12 +93,29 @@ export class LocalDisk extends StorageDisk {
     try {
       let size = 0;
       for await (const chunk of body) {
-        await handle.write(chunk);
-        size += chunk.byteLength;
+        let offset = 0;
+        while (offset < chunk.byteLength) {
+          file.signal?.throwIfAborted();
+          const { bytesWritten } = await handle.write(
+            chunk,
+            offset,
+            chunk.byteLength - offset,
+            null,
+          );
+          if (bytesWritten === 0) {
+            throw new StorageError('Local disk write made no progress');
+          }
+          offset += bytesWritten;
+          size += bytesWritten;
+        }
       }
 
       await handle.sync();
       const stats = await handle.stat();
+      if (stats.size !== size) {
+        throw new StorageError('Local disk write size does not match the written body');
+      }
+
       await handle.close();
       handle = undefined;
 

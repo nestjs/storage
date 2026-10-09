@@ -1,7 +1,19 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  truncateSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { open } from 'node:fs/promises';
 import { LocalDisk, StorageFileNotFoundError, StorageInvalidKeyError, StorageKeyConflictError } from '../lib/index.js';
+import { StorageError } from '../lib/errors/storage.error.js';
 
 const made: string[] = [];
 const tempDir = (label: string) => {
@@ -104,6 +116,136 @@ describe('LocalDisk', () => {
   });
 
   describe('atomic writes', () => {
+    describe('short writes', () => {
+      afterEach(() => vi.restoreAllMocks());
+
+      async function limitWrites(maxBytes: number, onWrite?: (call: number) => void) {
+        const probe = await open(join(tempDir('probe'), 'file'), 'wx');
+        const prototype = Object.getPrototypeOf(probe) as {
+          write(
+            buffer: Buffer,
+            offset?: number,
+            length?: number,
+            position?: number | null,
+          ): Promise<{ bytesWritten: number; buffer: Buffer }>;
+        };
+        await probe.close();
+        const write = prototype.write;
+        let calls = 0;
+
+        return vi.spyOn(prototype, 'write').mockImplementation(async function (
+          this: typeof prototype,
+          buffer,
+          offset = 0,
+          length = buffer.byteLength - offset,
+          position = null,
+        ) {
+          onWrite?.(++calls);
+          if (maxBytes === 0) {
+            return { bytesWritten: 0, buffer };
+          }
+          return write.call(this, buffer, offset, Math.min(maxBytes, length), position);
+        });
+      }
+
+      it('finishes sliced buffers and multiple chunks before committing', async () => {
+        await disk.put('data.bin', 'original');
+        const write = await limitWrites(2);
+        const result = await disk.put(
+          'data.bin',
+          (async function* () {
+            yield Buffer.from('xxabcdefyy').subarray(2, 8);
+            yield Buffer.alloc(0);
+            yield Buffer.from('ghijkl');
+          })(),
+          { contentLength: 12 },
+        );
+
+        expect(await disk.getText('data.bin')).toBe('abcdefghijkl');
+        expect(result.size).toBe(12);
+        expect((await disk.stat('data.bin')).size).toBe(result.size);
+        expect(write.mock.calls.map(([, offset]) => offset)).toEqual([0, 2, 4, 0, 2, 4]);
+        expect(readdirSync(join(root, '.nest-storage', 'tmp'))).toEqual([]);
+      });
+
+      it('rejects zero progress without replacing the file or its metadata', async () => {
+        await disk.put('data.bin', 'original', { metadata: { version: 'original' } });
+        const write = await limitWrites(0);
+
+        await expect(
+          disk.put('data.bin', 'replacement', { metadata: { version: 'replacement' } }),
+        ).rejects.toBeInstanceOf(StorageError);
+
+        expect(write).toHaveBeenCalledTimes(1);
+        expect(await disk.getText('data.bin')).toBe('original');
+        expect((await disk.stat('data.bin')).metadata).toEqual({ version: 'original' });
+        expect(readdirSync(join(root, '.nest-storage', 'tmp'))).toEqual([]);
+      });
+
+      it('propagates a write error after partial progress and preserves the file', async () => {
+        await disk.put('data.bin', 'original', { metadata: { version: 'original' } });
+        const failure = new Error('write failed');
+        await limitWrites(2, (call) => {
+          if (call === 2) {
+            throw failure;
+          }
+        });
+
+        await expect(
+          disk.put('data.bin', 'replacement', { metadata: { version: 'replacement' } }),
+        ).rejects.toBe(failure);
+
+        expect(await disk.getText('data.bin')).toBe('original');
+        expect((await disk.stat('data.bin')).metadata).toEqual({ version: 'original' });
+        expect(readdirSync(join(root, '.nest-storage', 'tmp'))).toEqual([]);
+      });
+
+      it('checks cancellation between partial writes', async () => {
+        await disk.put('data.bin', 'original');
+        const controller = new AbortController();
+        const reason = new Error('cancelled');
+        const write = await limitWrites(2, () => controller.abort(reason));
+
+        await expect(
+          disk.put('data.bin', 'replacement', { signal: controller.signal }),
+        ).rejects.toBe(reason);
+
+        expect(write).toHaveBeenCalledTimes(1);
+        expect(await disk.getText('data.bin')).toBe('original');
+        expect(readdirSync(join(root, '.nest-storage', 'tmp'))).toEqual([]);
+      });
+
+      it('stores an empty body without treating it as zero progress', async () => {
+        const write = await limitWrites(0);
+        const result = await disk.put('empty.bin', Buffer.alloc(0));
+
+        expect(result.size).toBe(0);
+        expect((await disk.stat('empty.bin')).size).toBe(0);
+        expect(await disk.getText('empty.bin')).toBe('');
+        expect(write).not.toHaveBeenCalled();
+      });
+
+      it('rejects a persisted size mismatch before replacing the file', async () => {
+        await disk.put('data.bin', 'original', { metadata: { version: 'original' } });
+        await expect(
+          disk.put(
+            'data.bin',
+            (async function* () {
+              yield Buffer.from('replacement');
+              // Inject truncation after the write, before the final stat and commit.
+              const tmp = join(root, '.nest-storage', 'tmp');
+              const [file] = readdirSync(tmp);
+              truncateSync(join(tmp, file), 1);
+            })(),
+          ),
+        ).rejects.toBeInstanceOf(StorageError);
+
+        expect(await disk.getText('data.bin')).toBe('original');
+        expect((await disk.stat('data.bin')).metadata).toEqual({ version: 'original' });
+        expect(readdirSync(join(root, '.nest-storage', 'tmp'))).toEqual([]);
+      });
+    });
+
     it('leaves no temp files, after success or failure', async () => {
       await disk.put('ok.txt', 'x');
       await expect(
