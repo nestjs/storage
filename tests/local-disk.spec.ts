@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   truncateSync,
@@ -92,6 +93,32 @@ describe('LocalDisk', () => {
       expect(readdirSync(outside).sort()).toEqual(['secret.txt']);
       expect((await disk.list()).entries.map((e) => e.key)).toEqual([]);
       expect((await disk.list({ prefix: 'escape/' })).entries).toEqual([]);
+    });
+
+    it('keeps a key whose first segment starts with dots inside the root', async () => {
+      // A link named like a parent directory still points outside, and stays refused
+      symlinkSync(outside, join(root, '..escape'));
+
+      await disk.put('..foo/a.txt', 'inside');
+
+      expect(readFileSync(join(root, '..foo', 'a.txt'), 'utf8')).toBe('inside');
+      expect(realpathSync(join(root, '..foo', 'a.txt'))).toBe(join(realpathSync(root), '..foo', 'a.txt'));
+      await expect(disk.put('..escape/planted.txt', 'x')).rejects.toBeInstanceOf(StorageInvalidKeyError);
+      await expect(disk.getText('..escape/secret.txt')).rejects.toBeInstanceOf(StorageFileNotFoundError);
+      expect(readdirSync(outside)).toEqual(['secret.txt']);
+    });
+
+    it('refuses a link to the parent of the root, and a link to the internal directory', async () => {
+      // The root sits in a directory of its own, so a write that escapes lands there and not in the shared temp directory
+      const nested = join(tempDir('parent'), 'root');
+      const nestedDisk = new LocalDisk({ root: nested });
+      symlinkSync(join(nested, '..'), join(nested, 'up'));
+      symlinkSync(join(nested, '.nest-storage'), join(nested, 'internal'));
+
+      await expect(nestedDisk.put('up/planted.txt', 'x')).rejects.toBeInstanceOf(StorageInvalidKeyError);
+      await expect(nestedDisk.put('internal/tmp/planted.txt', 'x')).rejects.toBeInstanceOf(StorageInvalidKeyError);
+      expect(existsSync(join(nested, '..', 'planted.txt'))).toBe(false);
+      expect(existsSync(join(nested, '.nest-storage', 'tmp', 'planted.txt'))).toBe(false);
     });
 
     it('allows links that stay inside the root', async () => {
