@@ -69,7 +69,11 @@ export abstract class StorageDisk {
   // What a disk implements. Keys and options arrive validated.
 
   /** Writes the whole body, then makes it visible at `key` at once, replacing any file there. */
-  protected abstract writeObject(key: string, body: AsyncIterable<Buffer>, file: StorageObjectWrite): Promise<StorageWriteResult>;
+  protected abstract writeObject(
+    key: string,
+    body: AsyncIterable<Buffer>,
+    file: StorageObjectWrite,
+  ): Promise<StorageWriteResult>;
   /** Throws `StorageFileNotFoundError`, or `StorageRangeNotSatisfiableError` for a range past the end. */
   protected abstract readObject(key: string, range: StorageRange | undefined): Promise<StorageDownload>;
   /** Throws `StorageFileNotFoundError`. */

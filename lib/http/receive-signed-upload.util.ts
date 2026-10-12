@@ -1,5 +1,11 @@
 import type { ReceiveSignedUploadOptions } from '../interfaces/http-options.interface.js';
-import { BadRequestException, ForbiddenException, HttpException, HttpStatus, PayloadTooLargeException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  PayloadTooLargeException,
+} from '@nestjs/common';
 import type { Readable } from 'node:stream';
 import { StorageBodyLengthError } from '../errors/storage-body-length.error.js';
 import type { StorageDisk } from '../disks/storage.disk.js';
@@ -17,7 +23,10 @@ import { requestHeaders, setHeader, verify } from './serve-file.util.js';
  * upload reaches the handler as a stream:
  * `app.getHttpAdapter().getInstance().addContentTypeParser('*', (req, payload, done) => done(null))`.
  */
-export async function receiveSignedUpload(disk: StorageDisk, options: ReceiveSignedUploadOptions): Promise<StorageWriteResult> {
+export async function receiveSignedUpload(
+  disk: StorageDisk,
+  options: ReceiveSignedUploadOptions,
+): Promise<StorageWriteResult> {
   const claims = verify(disk, options.req, 'PUT');
   const headers = requestHeaders(options.req);
 

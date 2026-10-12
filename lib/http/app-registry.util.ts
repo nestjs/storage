@@ -32,7 +32,8 @@ export function storageForRequest(req: any): Storage | undefined {
   }
 
   for (const candidate of candidates) {
-    const storage = typeof candidate === 'object' || typeof candidate === 'function' ? byServer.get(candidate as object) : undefined;
+    const storage =
+      typeof candidate === 'object' || typeof candidate === 'function' ? byServer.get(candidate as object) : undefined;
     if (storage) {
       return storage;
     }

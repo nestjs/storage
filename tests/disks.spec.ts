@@ -81,7 +81,11 @@ async function* generate(...parts: string[]) {
   }
 }
 
-const errorOf = (promise: Promise<unknown>) => promise.then(() => undefined, (error: unknown) => error);
+const errorOf = (promise: Promise<unknown>) =>
+  promise.then(
+    () => undefined,
+    (error: unknown) => error,
+  );
 
 describe.each(disks)('%s', (name, create) => {
   let disk: StorageDisk;
@@ -132,7 +136,11 @@ describe.each(disks)('%s', (name, create) => {
       });
       expect(download.lastModified).toBeInstanceOf(Date);
       expect(download.range).toBeUndefined();
-      expect(await disk.stat('photos/p1.jpg')).toMatchObject({ size: 4, contentType: 'image/jpeg', metadata: { productid: 'p1' } });
+      expect(await disk.stat('photos/p1.jpg')).toMatchObject({
+        size: 4,
+        contentType: 'image/jpeg',
+        metadata: { productid: 'p1' },
+      });
     });
 
     it('infers the content type from the extension, and an explicit one wins', async () => {
@@ -179,7 +187,11 @@ describe.each(disks)('%s', (name, create) => {
     });
 
     it('throws StorageFileNotFoundError (status 404) for a missing file', async () => {
-      for (const call of [() => disk.get('missing.txt'), () => disk.stat('missing.txt'), () => disk.getBuffer('missing.txt')]) {
+      for (const call of [
+        () => disk.get('missing.txt'),
+        () => disk.stat('missing.txt'),
+        () => disk.getBuffer('missing.txt'),
+      ]) {
         const error = await errorOf(call());
         expect(error).toBeInstanceOf(StorageFileNotFoundError);
         expect(error).toMatchObject({ status: 404, key: 'missing.txt' });
@@ -195,14 +207,19 @@ describe.each(disks)('%s', (name, create) => {
     it('a body shorter or longer than contentLength', async () => {
       await disk.put('doc.txt', 'original');
 
-      for (const [body, length] of [['12345', 4], ['123', 4]] as const) {
+      for (const [body, length] of [
+        ['12345', 4],
+        ['123', 4],
+      ] as const) {
         const error = await errorOf(disk.put('doc.txt', generate(body), { contentLength: length }));
         expect(error).toBeInstanceOf(StorageBodyLengthError);
         expect(error).toMatchObject({ status: 400, expected: 4 });
       }
       expect(await disk.getText('doc.txt')).toBe('original');
 
-      await expect(disk.put('new.txt', generate('12345'), { contentLength: 4 })).rejects.toThrow(StorageBodyLengthError);
+      await expect(disk.put('new.txt', generate('12345'), { contentLength: 4 })).rejects.toThrow(
+        StorageBodyLengthError,
+      );
       expect(await disk.exists('new.txt')).toBe(false);
     });
 
@@ -246,7 +263,14 @@ describe.each(disks)('%s', (name, create) => {
     it('a body that is not bytes', async () => {
       await expect(disk.put('x', 42 as never)).rejects.toThrow(TypeError);
       await expect(disk.put('x', generate() as never)).resolves.toMatchObject({ size: 0 });
-      await expect(disk.put('y', (async function* () { yield 42; })() as never)).rejects.toThrow(TypeError);
+      await expect(
+        disk.put(
+          'y',
+          (async function* () {
+            yield 42;
+          })() as never,
+        ),
+      ).rejects.toThrow(TypeError);
       expect(await disk.exists('y')).toBe(false);
     });
   });
@@ -311,7 +335,10 @@ describe.each(disks)('%s', (name, create) => {
 
       expect(result).toMatchObject({ key: 'dst/nested/a.bin', size: 7, contentType: 'application/x-example' });
       expect(await disk.getText('dst/nested/a.bin')).toBe('payload');
-      expect(await disk.stat('dst/nested/a.bin')).toMatchObject({ contentType: 'application/x-example', metadata: { owner: 'u1' } });
+      expect(await disk.stat('dst/nested/a.bin')).toMatchObject({
+        contentType: 'application/x-example',
+        metadata: { owner: 'u1' },
+      });
       expect(await disk.exists('src/a.bin')).toBe(true);
       await expect(disk.copy('src/missing', 'dst/x')).rejects.toMatchObject({ key: 'src/missing', status: 404 });
     });
@@ -338,7 +365,15 @@ describe.each(disks)('%s', (name, create) => {
 
   describe('list', () => {
     // No two keys differ only in case: they are one file on a case-insensitive file system (see local-disk.spec.ts).
-    const keys = ['docs/a-b.txt', 'docs/a/b.txt', 'docs/z.txt', 'docs/Zeta.txt', 'docs/é.txt', 'docs/ab.txt', 'other/x.txt'];
+    const keys = [
+      'docs/a-b.txt',
+      'docs/a/b.txt',
+      'docs/z.txt',
+      'docs/Zeta.txt',
+      'docs/é.txt',
+      'docs/ab.txt',
+      'other/x.txt',
+    ];
     beforeEach(async () => {
       for (const key of keys) {
         await disk.put(key, key);
@@ -347,14 +382,25 @@ describe.each(disks)('%s', (name, create) => {
 
     it('lists by prefix in UTF-8 byte order, with sizes', async () => {
       const page = await disk.list({ prefix: 'docs/' });
-      expect(page.entries.map((e) => e.key)).toEqual(['docs/Zeta.txt', 'docs/a-b.txt', 'docs/a/b.txt', 'docs/ab.txt', 'docs/z.txt', 'docs/é.txt']);
+      expect(page.entries.map((e) => e.key)).toEqual([
+        'docs/Zeta.txt',
+        'docs/a-b.txt',
+        'docs/a/b.txt',
+        'docs/ab.txt',
+        'docs/z.txt',
+        'docs/é.txt',
+      ]);
       expect(page.entries[0]).toMatchObject({ size: 13 });
       expect(page.entries[0].lastModified).toBeInstanceOf(Date);
       expect(page.cursor).toBeUndefined();
     });
 
     it('matches a prefix that is not a whole segment', async () => {
-      expect((await disk.list({ prefix: 'docs/a' })).entries.map((e) => e.key)).toEqual(['docs/a-b.txt', 'docs/a/b.txt', 'docs/ab.txt']);
+      expect((await disk.list({ prefix: 'docs/a' })).entries.map((e) => e.key)).toEqual([
+        'docs/a-b.txt',
+        'docs/a/b.txt',
+        'docs/ab.txt',
+      ]);
       expect((await disk.list({ prefix: 'docs/a/' })).entries.map((e) => e.key)).toEqual(['docs/a/b.txt']);
       expect((await disk.list({ prefix: 'nothing/' })).entries).toEqual([]);
     });
@@ -392,27 +438,47 @@ describe.each(disks)('%s', (name, create) => {
   });
 
   describe('keys', () => {
-    const invalid = ['', '/abs.txt', 'a//b', 'a/', '../etc/passwd', 'a/../../b', 'a/./b', '.', '..', 'a\\b', '..\\x', 'a\u0000b', 'line\nbreak', 'del\u007f', 'x'.repeat(1025), '\uD800lone'];
+    const invalid = [
+      '',
+      '/abs.txt',
+      'a//b',
+      'a/',
+      '../etc/passwd',
+      'a/../../b',
+      'a/./b',
+      '.',
+      '..',
+      'a\\b',
+      '..\\x',
+      'a\u0000b',
+      'line\nbreak',
+      'del\u007f',
+      'x'.repeat(1025),
+      '\uD800lone',
+    ];
 
-    it.each(invalid.map((key) => [JSON.stringify(key).slice(0, 40), key]))('refuses %s everywhere', async (_label, key) => {
-      const calls = [
-        () => disk.put(key, 'x'),
-        () => disk.get(key),
-        () => disk.stat(key),
-        () => disk.exists(key),
-        () => disk.delete(key),
-        () => disk.copy('ok.txt', key),
-        () => disk.move(key, 'ok.txt'),
-        () => disk.signedUrl(key),
-      ];
+    it.each(invalid.map((key) => [JSON.stringify(key).slice(0, 40), key]))(
+      'refuses %s everywhere',
+      async (_label, key) => {
+        const calls = [
+          () => disk.put(key, 'x'),
+          () => disk.get(key),
+          () => disk.stat(key),
+          () => disk.exists(key),
+          () => disk.delete(key),
+          () => disk.copy('ok.txt', key),
+          () => disk.move(key, 'ok.txt'),
+          () => disk.signedUrl(key),
+        ];
 
-      for (const call of calls) {
-        const error = await errorOf(call());
-        expect(error).toBeInstanceOf(StorageInvalidKeyError);
-        expect(error).toMatchObject({ status: 400 });
-      }
-      expect(() => disk.url(key)).toThrow(StorageInvalidKeyError);
-    });
+        for (const call of calls) {
+          const error = await errorOf(call());
+          expect(error).toBeInstanceOf(StorageInvalidKeyError);
+          expect(error).toMatchObject({ status: 400 });
+        }
+        expect(() => disk.url(key)).toThrow(StorageInvalidKeyError);
+      },
+    );
 
     // A local disk is also bound by its file system's limits (255 bytes a segment, and a
     // path length that macOS caps at 1024 bytes): see local-disk.spec.ts.
@@ -455,7 +521,11 @@ describe.each(disks)('%s', (name, create) => {
 
       const upload = await disk.signedUpload('incoming/x', { contentType: 'image/png', contentLength: 10 });
       expect(upload).toMatchObject({ method: 'PUT', headers: { 'content-type': 'image/png' } });
-      expect(disk.verifySignedUrl(upload.url, 'PUT')).toMatchObject({ key: 'incoming/x', contentType: 'image/png', contentLength: 10 });
+      expect(disk.verifySignedUrl(upload.url, 'PUT')).toMatchObject({
+        key: 'incoming/x',
+        contentType: 'image/png',
+        contentLength: 10,
+      });
     });
   }
 

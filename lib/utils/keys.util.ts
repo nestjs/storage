@@ -62,10 +62,7 @@ export function assertValidPrefix(prefix: unknown): asserts prefix is string {
 
 /** RFC 3986 unreserved characters stay; everything else is percent-encoded as UTF-8. */
 export function encodeRfc3986(value: string): string {
-  return encodeURIComponent(value).replace(
-    /[!'()*]/g,
-    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
-  );
+  return encodeURIComponent(value).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
 /** A key as a URL path: each segment encoded, the slashes kept. */

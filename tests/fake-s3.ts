@@ -331,7 +331,9 @@ export class FakeS3 {
     ].join('\n');
 
     const scope = `${day}/${region}/s3/aws4_request`;
-    const toSign = ['AWS4-HMAC-SHA256', date, scope, createHash('sha256').update(canonicalRequest).digest('hex')].join('\n');
+    const toSign = ['AWS4-HMAC-SHA256', date, scope, createHash('sha256').update(canonicalRequest).digest('hex')].join(
+      '\n',
+    );
     let key: Buffer = createHmac('sha256', `AWS4${SECRET_KEY}`).update(day).digest();
     for (const part of [region, 's3', 'aws4_request']) {
       key = createHmac('sha256', key).update(part).digest();
@@ -430,7 +432,11 @@ export class FakeS3 {
       }
 
       const slice = object.data.subarray(start, end + 1);
-      res.writeHead(206, { ...headers, 'content-length': String(slice.length), 'content-range': `bytes ${start}-${end}/${size}` });
+      res.writeHead(206, {
+        ...headers,
+        'content-length': String(slice.length),
+        'content-range': `bytes ${start}-${end}/${size}`,
+      });
       return res.end(slice);
     }
 
@@ -451,7 +457,11 @@ export class FakeS3 {
     }
 
     this.objects.set(`${bucket}/${key}`, copy);
-    this.xml(res, 200, `<CopyObjectResult><ETag>${escape(copy.etag)}</ETag><LastModified>${copy.lastModified.toISOString()}</LastModified></CopyObjectResult>`);
+    this.xml(
+      res,
+      200,
+      `<CopyObjectResult><ETag>${escape(copy.etag)}</ETag><LastModified>${copy.lastModified.toISOString()}</LastModified></CopyObjectResult>`,
+    );
   }
 
   private list(res: ServerResponse, bucket: string, q: Record<string, string>) {
@@ -462,7 +472,9 @@ export class FakeS3 {
     const keys = [...this.objects.keys()]
       .filter((k) => k.startsWith(`${bucket}/`))
       .map((k) => k.slice(bucket.length + 1))
-      .filter((k) => k.startsWith(prefix) && (after === undefined || Buffer.compare(Buffer.from(k), Buffer.from(after)) > 0))
+      .filter(
+        (k) => k.startsWith(prefix) && (after === undefined || Buffer.compare(Buffer.from(k), Buffer.from(after)) > 0),
+      )
       .sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
     const page = keys.slice(0, max);
     const truncated = keys.length > page.length;
@@ -474,7 +486,9 @@ export class FakeS3 {
       })
       .join('');
 
-    const token = truncated ? `<NextContinuationToken>${Buffer.from(page.at(-1)!).toString('base64')}</NextContinuationToken>` : '';
+    const token = truncated
+      ? `<NextContinuationToken>${Buffer.from(page.at(-1)!).toString('base64')}</NextContinuationToken>`
+      : '';
     this.xml(
       res,
       200,
@@ -491,10 +505,14 @@ export class FakeS3 {
     const errors: string[] = [];
 
     for (const key of keys) {
-      const fault = this.faults.find((f) => f.times > 0 && f.code === 'AccessDenied' && f.match({ key } as LoggedRequest));
+      const fault = this.faults.find(
+        (f) => f.times > 0 && f.code === 'AccessDenied' && f.match({ key } as LoggedRequest),
+      );
       if (fault) {
         fault.times--;
-        errors.push(`<Error><Key>${escape(key)}</Key><Code>AccessDenied</Code><Message>Access Denied</Message></Error>`);
+        errors.push(
+          `<Error><Key>${escape(key)}</Key><Code>AccessDenied</Code><Message>Access Denied</Message></Error>`,
+        );
         continue;
       }
       this.objects.delete(`${bucket}/${key}`);
@@ -506,7 +524,11 @@ export class FakeS3 {
   private createUpload(req: IncomingMessage, res: ServerResponse, bucket: string, key: string) {
     const id = `upload-${this.nextUpload++}`;
     this.uploads.set(id, { bucket, key, parts: new Map(), template: this.template(req) });
-    this.xml(res, 200, `<InitiateMultipartUploadResult><Bucket>${bucket}</Bucket><Key>${escape(key)}</Key><UploadId>${id}</UploadId></InitiateMultipartUploadResult>`);
+    this.xml(
+      res,
+      200,
+      `<InitiateMultipartUploadResult><Bucket>${bucket}</Bucket><Key>${escape(key)}</Key><UploadId>${id}</UploadId></InitiateMultipartUploadResult>`,
+    );
   }
 
   private uploadPart(res: ServerResponse, q: Record<string, string>, body: Buffer) {
@@ -526,9 +548,9 @@ export class FakeS3 {
       return this.error(res, 404, 'NoSuchUpload', 'no such upload');
     }
 
-    const listed = [...body.toString().matchAll(/<Part><PartNumber>(\d+)<\/PartNumber><ETag>([\s\S]*?)<\/ETag><\/Part>/g)].map(
-      (m) => ({ number: Number(m[1]), etag: unescape(m[2]) }),
-    );
+    const listed = [
+      ...body.toString().matchAll(/<Part><PartNumber>(\d+)<\/PartNumber><ETag>([\s\S]*?)<\/ETag><\/Part>/g),
+    ].map((m) => ({ number: Number(m[1]), etag: unescape(m[2]) }));
 
     const faultIndex = this.faults.findIndex((f) => f.times > 0 && f.code === 'CompleteError');
     if (faultIndex !== -1) {
@@ -555,16 +577,32 @@ export class FakeS3 {
     const etag = `"${md5(Buffer.concat(listed.map((p) => Buffer.from(p.etag.replace(/"/g, ''), 'hex'))))}-${listed.length}"`;
     this.objects.set(`${bucket}/${key}`, { ...upload.template, data, etag, lastModified: new Date() });
     this.uploads.delete(id);
-    this.xml(res, 200, `<CompleteMultipartUploadResult><Bucket>${bucket}</Bucket><Key>${escape(key)}</Key><ETag>${escape(etag)}</ETag></CompleteMultipartUploadResult>`);
+    this.xml(
+      res,
+      200,
+      `<CompleteMultipartUploadResult><Bucket>${bucket}</Bucket><Key>${escape(key)}</Key><ETag>${escape(etag)}</ETag></CompleteMultipartUploadResult>`,
+    );
   }
 
   private xml(res: ServerResponse, status: number, body: string) {
     res.writeHead(status, { 'content-type': 'application/xml' }).end(`<?xml version="1.0" encoding="UTF-8"?>\n${body}`);
   }
 
-  private error(res: ServerResponse, status: number, code: string, message: string, extra: Record<string, string> = {}) {
-    const fields = Object.entries(extra).map(([k, v]) => `<${k}>${v}</${k}>`).join('');
-    this.xml(res, status, `<Error><Code>${code}</Code><Message>${escape(message)}</Message>${fields}<RequestId>req-${this.requests.length}</RequestId></Error>`);
+  private error(
+    res: ServerResponse,
+    status: number,
+    code: string,
+    message: string,
+    extra: Record<string, string> = {},
+  ) {
+    const fields = Object.entries(extra)
+      .map(([k, v]) => `<${k}>${v}</${k}>`)
+      .join('');
+    this.xml(
+      res,
+      status,
+      `<Error><Code>${code}</Code><Message>${escape(message)}</Message>${fields}<RequestId>req-${this.requests.length}</RequestId></Error>`,
+    );
   }
 }
 
@@ -608,5 +646,10 @@ function escape(text: string) {
 }
 
 function unescape(text: string) {
-  return text.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+  return text
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
 }

@@ -75,7 +75,8 @@ function createControllers(api: UploadApi) {
           disk: 'photos',
           contentTypes: ['image/png', 'image/jpeg'],
           // A fixed key for one file name, to check a failed upload never replaces a file
-          key: (file) => (file.originalname === 'fixed.png' ? 'photos/fixed.png' : `photos/${crypto.randomUUID()}${file.extension}`),
+          key: (file) =>
+            file.originalname === 'fixed.png' ? 'photos/fixed.png' : `photos/${crypto.randomUUID()}${file.extension}`,
           cacheControl: 'public, max-age=31536000, immutable',
           metadata: (file) => ({ field: file.fieldname }),
         }),
@@ -87,7 +88,12 @@ function createControllers(api: UploadApi) {
     }
 
     @Post('documents')
-    @UseInterceptors(api.FilesInterceptor('docs', 3, { storage: uploadToDisk({ disk: 'private', key: (f) => `docs/${f.originalname}` }), limits: { fileSize: 1000 } }))
+    @UseInterceptors(
+      api.FilesInterceptor('docs', 3, {
+        storage: uploadToDisk({ disk: 'private', key: (f) => `docs/${f.originalname}` }),
+        limits: { fileSize: 1000 },
+      }),
+    )
     uploadDocuments(@UploadedFiles() files: StoredUpload[]) {
       return files.map((file) => ({ key: file.key, contentType: file.contentType, size: file.size }));
     }
@@ -134,7 +140,10 @@ describe.each(adapters.map((a) => a.name))('on %s', (adapter) => {
     privateRoot = mkdtempSync(join(tmpdir(), 'private-'));
     roots.push(photosRoot, privateRoot);
     photos = new LocalDisk({ root: photosRoot });
-    privateDisk = new LocalDisk({ root: privateRoot, signedUrls: { baseUrl: 'http://placeholder/files', keys: ['s'.repeat(32)] } });
+    privateDisk = new LocalDisk({
+      root: privateRoot,
+      signedUrls: { baseUrl: 'http://placeholder/files', keys: ['s'.repeat(32)] },
+    });
 
     @Module({
       imports: [StorageModule.forRoot({ default: 'private', disks: { photos, private: privateDisk } })],
@@ -155,7 +164,11 @@ describe.each(adapters.map((a) => a.name))('on %s', (adapter) => {
   });
   afterAll(() => app?.close());
 
-  const files = (root: string) => readdirSync(root, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => join(e.parentPath, e.name).slice(root.length + 1)).sort();
+  const files = (root: string) =>
+    readdirSync(root, { recursive: true, withFileTypes: true })
+      .filter((e) => e.isFile())
+      .map((e) => join(e.parentPath, e.name).slice(root.length + 1))
+      .sort();
   const noTempFiles = () => {
     expect(readdirSync(join(photosRoot, '.nest-storage', 'tmp'))).toEqual([]);
     expect(readdirSync(join(privateRoot, '.nest-storage', 'tmp'))).toEqual([]);
@@ -164,7 +177,10 @@ describe.each(adapters.map((a) => a.name))('on %s', (adapter) => {
 
   describe('uploadToDisk()', () => {
     it('streams an upload into the named disk, typed by its bytes', async () => {
-      const res = await http().post('/photos').attach('photo', PNG, { filename: 'photo.png', contentType: 'image/png' }).expect(201);
+      const res = await http()
+        .post('/photos')
+        .attach('photo', PNG, { filename: 'photo.png', contentType: 'image/png' })
+        .expect(201);
 
       expect(res.body).toMatchObject({
         fieldname: 'photo',
@@ -177,19 +193,32 @@ describe.each(adapters.map((a) => a.name))('on %s', (adapter) => {
         etag: expect.any(String),
       });
       expect(await photos.getBuffer(res.body.key)).toEqual(PNG);
-      expect(await photos.stat(res.body.key)).toMatchObject({ cacheControl: 'public, max-age=31536000, immutable', metadata: { field: 'photo' } });
+      expect(await photos.stat(res.body.key)).toMatchObject({
+        cacheControl: 'public, max-age=31536000, immutable',
+        metadata: { field: 'photo' },
+      });
     });
 
     it('refuses a file whose bytes are not an allowed type, whatever it claims (415), before writing', async () => {
       const before = files(photosRoot);
-      const res = await http().post('/photos').attach('photo', HTML, { filename: 'cute.png', contentType: 'image/png' }).expect(415);
-      expect(res.body).toEqual({ message: 'File type not allowed. Allowed types: image/png, image/jpeg', error: 'Unsupported Media Type', statusCode: 415 });
+      const res = await http()
+        .post('/photos')
+        .attach('photo', HTML, { filename: 'cute.png', contentType: 'image/png' })
+        .expect(415);
+      expect(res.body).toEqual({
+        message: 'File type not allowed. Allowed types: image/png, image/jpeg',
+        error: 'Unsupported Media Type',
+        statusCode: 415,
+      });
       expect(files(photosRoot)).toEqual(before);
     });
 
     it('refuses a file over limits.fileSize (413) without replacing the file at its key', async () => {
       await photos.put('photos/fixed.png', PNG);
-      const res = await http().post('/photos').attach('photo', bigPng(), { filename: 'fixed.png', contentType: 'image/png' }).expect(413);
+      const res = await http()
+        .post('/photos')
+        .attach('photo', bigPng(), { filename: 'fixed.png', contentType: 'image/png' })
+        .expect(413);
       expect(res.body.message).toBe('File too large');
       expect(await photos.getBuffer('photos/fixed.png')).toEqual(PNG);
     });
@@ -213,21 +242,35 @@ describe.each(adapters.map((a) => a.name))('on %s', (adapter) => {
     });
 
     it('stores several files, and a file in an unexpected field fails the request and is removed', async () => {
-      const ok = await http().post('/documents').attach('docs', PDF, { filename: 'one.pdf' }).attach('docs', Buffer.from('plain'), { filename: 'two.txt' }).expect(201);
+      const ok = await http()
+        .post('/documents')
+        .attach('docs', PDF, { filename: 'one.pdf' })
+        .attach('docs', Buffer.from('plain'), { filename: 'two.txt' })
+        .expect(201);
       expect(ok.body).toEqual([
         { key: 'docs/one.pdf', contentType: 'application/pdf', size: PDF.length },
         // Not a known type: stored as octet-stream, never as the client's text/plain
         { key: 'docs/two.txt', contentType: 'application/octet-stream', size: 5 },
       ]);
 
-      const bad = await http().post('/documents').attach('docs', PDF, { filename: 'three.pdf' }).attach('other', PDF, { filename: 'x.pdf' }).expect(400);
+      const bad = await http()
+        .post('/documents')
+        .attach('docs', PDF, { filename: 'three.pdf' })
+        .attach('other', PDF, { filename: 'x.pdf' })
+        .expect(400);
       expect(bad.body.message).toBe('Unexpected file field - other');
       expect(await privateDisk.exists('docs/three.pdf')).toBe(false);
     });
 
     it('never stores the type a client declares', async () => {
-      const res = await http().post('/anything').attach('file', HTML, { filename: 'page.html', contentType: 'text/html' }).expect(201);
-      expect(res.body).toMatchObject({ contentType: 'application/octet-stream', key: expect.stringMatching(/^[0-9a-f-]{36}$/) });
+      const res = await http()
+        .post('/anything')
+        .attach('file', HTML, { filename: 'page.html', contentType: 'text/html' })
+        .expect(201);
+      expect(res.body).toMatchObject({
+        contentType: 'application/octet-stream',
+        key: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      });
       expect((await privateDisk.stat(res.body.key)).contentType).toBe('application/octet-stream');
     });
 
@@ -236,12 +279,20 @@ describe.each(adapters.map((a) => a.name))('on %s', (adapter) => {
       const boundary = 'x-boundary';
 
       await new Promise<void>((resolve) => {
-        const req = httpRequest(`${new URL(app.getHttpServer().address() ? `http://127.0.0.1:${app.getHttpServer().address().port}` : '')}photos`, {
-          method: 'POST',
-          headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, 'content-length': String(1_000_000) },
-        });
+        const req = httpRequest(
+          `${new URL(app.getHttpServer().address() ? `http://127.0.0.1:${app.getHttpServer().address().port}` : '')}photos`,
+          {
+            method: 'POST',
+            headers: {
+              'content-type': `multipart/form-data; boundary=${boundary}`,
+              'content-length': String(1_000_000),
+            },
+          },
+        );
         req.on('error', () => resolve());
-        req.write(`--${boundary}\r\nContent-Disposition: form-data; name="photo"; filename="cut.png"\r\nContent-Type: image/png\r\n\r\n`);
+        req.write(
+          `--${boundary}\r\nContent-Disposition: form-data; name="photo"; filename="cut.png"\r\nContent-Type: image/png\r\n\r\n`,
+        );
         req.write(PNG);
         req.write(Buffer.alloc(20_000, 3));
         setTimeout(() => {
@@ -330,19 +381,37 @@ describe.each(adapters.map((a) => a.name))('on %s', (adapter) => {
 
     it('names downloads safely', async () => {
       const res = await http().get('/download').query({ key: 'invoices/INV-1.pdf' }).expect(200);
-      expect(res.headers['content-disposition']).toBe(`attachment; filename="Rechnung M_rz.pdf"; filename*=UTF-8''Rechnung%20M%C3%A4rz.pdf`);
+      expect(res.headers['content-disposition']).toBe(
+        `attachment; filename="Rechnung M_rz.pdf"; filename*=UTF-8''Rechnung%20M%C3%A4rz.pdf`,
+      );
     });
 
     it('answers a range with 206 and Content-Range', async () => {
-      const res = await http().get('/photos').query({ key: 'site/photo.png' }).set('range', 'bytes=1-3').buffer(true).parse(binary).expect(206);
+      const res = await http()
+        .get('/photos')
+        .query({ key: 'site/photo.png' })
+        .set('range', 'bytes=1-3')
+        .buffer(true)
+        .parse(binary)
+        .expect(206);
       expect(res.body.toString('latin1')).toBe('PNG');
       expect(res.headers).toMatchObject({ 'content-range': `bytes 1-3/${PNG.length}`, 'content-length': '3' });
-      const suffix = await http().get('/photos').query({ key: 'site/photo.png' }).set('range', 'bytes=-4').buffer(true).parse(binary).expect(206);
+      const suffix = await http()
+        .get('/photos')
+        .query({ key: 'site/photo.png' })
+        .set('range', 'bytes=-4')
+        .buffer(true)
+        .parse(binary)
+        .expect(206);
       expect(suffix.body).toEqual(PNG.subarray(-4));
     });
 
     it('answers an unsatisfiable range with 416 and the size', async () => {
-      const res = await http().get('/photos').query({ key: 'site/photo.png' }).set('range', `bytes=${PNG.length}-`).expect(416);
+      const res = await http()
+        .get('/photos')
+        .query({ key: 'site/photo.png' })
+        .set('range', `bytes=${PNG.length}-`)
+        .expect(416);
       expect(res.headers['content-range']).toBe(`bytes */${PNG.length}`);
     });
 
@@ -351,14 +420,28 @@ describe.each(adapters.map((a) => a.name))('on %s', (adapter) => {
         await http().get('/photos').query({ key: 'site/photo.png' }).set('range', range).expect(200);
       }
 
-      await http().get('/photos').query({ key: 'site/photo.png' }).set('range', 'bytes=0-1').set('if-range', '"old"').expect(200);
+      await http()
+        .get('/photos')
+        .query({ key: 'site/photo.png' })
+        .set('range', 'bytes=0-1')
+        .set('if-range', '"old"')
+        .expect(200);
       const { headers } = await http().get('/photos').query({ key: 'site/photo.png' });
-      await http().get('/photos').query({ key: 'site/photo.png' }).set('range', 'bytes=0-1').set('if-range', headers.etag).expect(206);
+      await http()
+        .get('/photos')
+        .query({ key: 'site/photo.png' })
+        .set('range', 'bytes=0-1')
+        .set('if-range', headers.etag)
+        .expect(206);
     });
 
     it('answers If-None-Match with 304', async () => {
       const { headers } = await http().get('/photos').query({ key: 'site/photo.png' });
-      const res = await http().get('/photos').query({ key: 'site/photo.png' }).set('if-none-match', headers.etag).expect(304);
+      const res = await http()
+        .get('/photos')
+        .query({ key: 'site/photo.png' })
+        .set('if-none-match', headers.etag)
+        .expect(304);
       expect(res.headers.etag).toBe(headers.etag);
       expect(res.text ?? '').toBe('');
     });
@@ -405,7 +488,9 @@ describe.each(adapters.map((a) => a.name))('on %s', (adapter) => {
       const tampered = url.replace('INV-2', 'INV-1');
 
       expect((await http().get(tampered).expect(403)).body.message).toBe('Invalid signed URL');
-      await http().get(url.replace(/expires=\d+/, 'expires=9999999999')).expect(403);
+      await http()
+        .get(url.replace(/expires=\d+/, 'expires=9999999999'))
+        .expect(403);
       await http().get('/files?key=invoices%2FINV-2.pdf').expect(403);
 
       const upload = await privateDisk.signedUpload('invoices/INV-2.pdf', { contentType: 'application/pdf' });
@@ -418,7 +503,10 @@ describe.each(adapters.map((a) => a.name))('on %s', (adapter) => {
     });
 
     it('receives an upload to a signed URL, the way S3 does', async () => {
-      const upload = await privateDisk.signedUpload('incoming/photo-1', { contentType: 'image/png', contentLength: PNG.length });
+      const upload = await privateDisk.signedUpload('incoming/photo-1', {
+        contentType: 'image/png',
+        contentLength: PNG.length,
+      });
       const res = await http().put(local(upload.url)).set(upload.headers).send(PNG).expect(200);
       expect(res.body).toMatchObject({ key: 'incoming/photo-1', size: PNG.length, contentType: 'image/png' });
       expect(res.headers.etag).toBe(res.body.etag);
@@ -426,9 +514,16 @@ describe.each(adapters.map((a) => a.name))('on %s', (adapter) => {
     });
 
     it('refuses an upload with another type or length, or over maxSize', async () => {
-      const upload = await privateDisk.signedUpload('incoming/photo-2', { contentType: 'image/png', contentLength: PNG.length });
+      const upload = await privateDisk.signedUpload('incoming/photo-2', {
+        contentType: 'image/png',
+        contentLength: PNG.length,
+      });
       await http().put(local(upload.url)).set('content-type', 'text/html').send(PNG).expect(403);
-      await http().put(local(upload.url)).set(upload.headers).send(Buffer.concat([PNG, PNG])).expect(403);
+      await http()
+        .put(local(upload.url))
+        .set(upload.headers)
+        .send(Buffer.concat([PNG, PNG]))
+        .expect(403);
 
       const unsized = await privateDisk.signedUpload('incoming/photo-3', { contentType: 'image/png' });
       await http().put(local(unsized.url)).set(unsized.headers).send(Buffer.alloc(1001)).expect(413);
@@ -439,41 +534,47 @@ describe.each(adapters.map((a) => a.name))('on %s', (adapter) => {
 });
 
 describe('uploadToDisk() without StorageModule', () => {
-  it.each(adapters.map((a) => a.name))('on %s: a disk instance works; a name explains what is missing', async (adapter) => {
-    const disk = new InMemoryDisk();
-    const api = apis[adapter];
+  it.each(adapters.map((a) => a.name))(
+    'on %s: a disk instance works; a name explains what is missing',
+    async (adapter) => {
+      const disk = new InMemoryDisk();
+      const api = apis[adapter];
 
-    @Controller()
-    class BareController {
-      @Post('instance')
-      @UseInterceptors(api.FileInterceptor('file', { storage: uploadToDisk({ disk }) }))
-      instance(@UploadedFile() file: StoredUpload) {
-        return { key: file.key };
-      }
-      @Post('named')
-      @UseInterceptors(api.FileInterceptor('file', { storage: uploadToDisk({ disk: 'photos' }) }))
-      named() {}
-    }
-    @Module({ controllers: [BareController] })
-    class BareModule {}
-
-    const app = await createApp(adapter, BareModule, {
-      setup: async (instance) => {
-        instance.useLogger(false);
-        if (adapter === 'fastify') {
-          await instance.getHttpAdapter().getInstance().register(multipart);
+      @Controller()
+      class BareController {
+        @Post('instance')
+        @UseInterceptors(api.FileInterceptor('file', { storage: uploadToDisk({ disk }) }))
+        instance(@UploadedFile() file: StoredUpload) {
+          return { key: file.key };
         }
-      },
-    });
+        @Post('named')
+        @UseInterceptors(api.FileInterceptor('file', { storage: uploadToDisk({ disk: 'photos' }) }))
+        named() {}
+      }
+      @Module({ controllers: [BareController] })
+      class BareModule {}
 
-    try {
-      const res = await request(app.getHttpServer()).post('/instance').attach('file', PDF, { filename: 'a.pdf' }).expect(201);
-      expect(disk.keys()).toEqual([res.body.key]);
-      await request(app.getHttpServer()).post('/named').attach('file', PDF, { filename: 'a.pdf' }).expect(500);
-    } finally {
-      await app.close();
-    }
-  });
+      const app = await createApp(adapter, BareModule, {
+        setup: async (instance) => {
+          instance.useLogger(false);
+          if (adapter === 'fastify') {
+            await instance.getHttpAdapter().getInstance().register(multipart);
+          }
+        },
+      });
+
+      try {
+        const res = await request(app.getHttpServer())
+          .post('/instance')
+          .attach('file', PDF, { filename: 'a.pdf' })
+          .expect(201);
+        expect(disk.keys()).toEqual([res.body.key]);
+        await request(app.getHttpServer()).post('/named').attach('file', PDF, { filename: 'a.pdf' }).expect(500);
+      } finally {
+        await app.close();
+      }
+    },
+  );
 });
 
 function binary(res: any, callback: (error: Error | null, body: Buffer) => void) {

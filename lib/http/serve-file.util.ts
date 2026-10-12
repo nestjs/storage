@@ -1,11 +1,5 @@
 import type { ServeFileOptions, ServeSignedUrlOptions } from '../interfaces/http-options.interface.js';
-import {
-  ForbiddenException,
-  HttpException,
-  HttpStatus,
-  NotFoundException,
-  StreamableFile,
-} from '@nestjs/common';
+import { ForbiddenException, HttpException, HttpStatus, NotFoundException, StreamableFile } from '@nestjs/common';
 import { StorageFileNotFoundError } from '../errors/storage-file-not-found.error.js';
 import { StorageInvalidKeyError } from '../errors/storage-invalid-key.error.js';
 import { StorageRangeNotSatisfiableError } from '../errors/storage-range-not-satisfiable.error.js';
@@ -19,7 +13,8 @@ import type { StorageDownload, StorageRange } from '../interfaces/storage-disk.i
  * SVG, XML, JavaScript, unknown types) is forced to `attachment`, and `nosniff` stops the
  * browser from guessing a more dangerous type.
  */
-const INLINE_SAFE = /^(image\/(png|jpeg|gif|webp|avif|heic|bmp)|application\/pdf|audio\/[\w.+-]+|video\/[\w.+-]+|text\/plain)(;|$)/i;
+const INLINE_SAFE =
+  /^(image\/(png|jpeg|gif|webp|avif|heic|bmp)|application\/pdf|audio\/[\w.+-]+|video\/[\w.+-]+|text\/plain)(;|$)/i;
 
 /**
  * Streams a file from a disk as the response, with `Content-Type`, `Content-Length`,
@@ -50,7 +45,10 @@ export async function serveFile(
  * `serveFile()`, with the `Content-Disposition` the URL was signed with (an attachment named
  * after the key when none was). A bad or expired URL is a `ForbiddenException`.
  */
-export async function serveSignedUrl(disk: StorageDisk, options: ServeSignedUrlOptions): Promise<StreamableFile | undefined> {
+export async function serveSignedUrl(
+  disk: StorageDisk,
+  options: ServeSignedUrlOptions,
+): Promise<StreamableFile | undefined> {
   const claims = verify(disk, options.req, 'GET');
   return respond(disk, claims.key, options, claims.contentDisposition);
 }
@@ -185,7 +183,11 @@ export function requestHeaders(req: unknown): Record<string, string | undefined>
   const headers = (req as { headers?: Record<string, unknown> } | undefined)?.headers ?? {};
   const result: Record<string, string | undefined> = {};
   for (const [name, value] of Object.entries(headers)) {
-    result[name.toLowerCase()] = Array.isArray(value) ? value.join(', ') : typeof value === 'string' ? value : undefined;
+    result[name.toLowerCase()] = Array.isArray(value)
+      ? value.join(', ')
+      : typeof value === 'string'
+        ? value
+        : undefined;
   }
   return result;
 }
@@ -212,7 +214,9 @@ function isFastifyReply(r: ResponseLike): boolean {
 export function assertResponse(res: unknown): asserts res is ResponseLike {
   const r = res as ResponseLike | undefined;
   if (!r || (!isFastifyReply(r) && typeof r.setHeader !== 'function')) {
-    throw new TypeError('Pass the response as `res` (@Res({ passthrough: true })): an Express response or a Fastify reply');
+    throw new TypeError(
+      'Pass the response as `res` (@Res({ passthrough: true })): an Express response or a Fastify reply',
+    );
   }
 }
 

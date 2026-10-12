@@ -50,7 +50,12 @@ describe('LocalDisk', () => {
 
   describe('confinement', () => {
     it('never resolves a key outside the root', async () => {
-      for (const key of ['../outside/secret.txt', `..${'/..'.repeat(20)}/etc/passwd`, join(outside, 'secret.txt'), '..\\secret.txt']) {
+      for (const key of [
+        '../outside/secret.txt',
+        `..${'/..'.repeat(20)}/etc/passwd`,
+        join(outside, 'secret.txt'),
+        '..\\secret.txt',
+      ]) {
         await expect(disk.getText(key)).rejects.toBeInstanceOf(StorageInvalidKeyError);
         await expect(disk.put(key, 'x')).rejects.toBeInstanceOf(StorageInvalidKeyError);
       }
@@ -101,7 +106,13 @@ describe('LocalDisk', () => {
       await disk.put('a.txt', 'x', { metadata: { m: '1' } });
 
       // Whatever the case: a case-insensitive file system would reach it through `.NEST-STORAGE`
-      for (const key of ['.nest-storage/tmp/x', '.nest-storage', '.nest-storage/meta/abc.json', '.NEST-STORAGE/tmp/x', '.Nest-Storage']) {
+      for (const key of [
+        '.nest-storage/tmp/x',
+        '.nest-storage',
+        '.nest-storage/meta/abc.json',
+        '.NEST-STORAGE/tmp/x',
+        '.Nest-Storage',
+      ]) {
         await expect(disk.put(key, 'x')).rejects.toBeInstanceOf(StorageInvalidKeyError);
         await expect(disk.get(key)).rejects.toBeInstanceOf(StorageInvalidKeyError);
       }
@@ -171,9 +182,9 @@ describe('LocalDisk', () => {
         await disk.put('data.bin', 'original', { metadata: { version: 'original' } });
         const write = await limitWrites(0);
 
-        await expect(
-          disk.put('data.bin', 'replacement', { metadata: { version: 'replacement' } }),
-        ).rejects.toThrow(new StorageError('Local disk write made no progress for "data.bin"'));
+        await expect(disk.put('data.bin', 'replacement', { metadata: { version: 'replacement' } })).rejects.toThrow(
+          new StorageError('Local disk write made no progress for "data.bin"'),
+        );
 
         expect(write).toHaveBeenCalledTimes(1);
         expect(await disk.getText('data.bin')).toBe('original');
@@ -190,9 +201,9 @@ describe('LocalDisk', () => {
           }
         });
 
-        await expect(
-          disk.put('data.bin', 'replacement', { metadata: { version: 'replacement' } }),
-        ).rejects.toBe(failure);
+        await expect(disk.put('data.bin', 'replacement', { metadata: { version: 'replacement' } })).rejects.toBe(
+          failure,
+        );
 
         expect(await disk.getText('data.bin')).toBe('original');
         expect((await disk.stat('data.bin')).metadata).toEqual({ version: 'original' });
@@ -209,9 +220,7 @@ describe('LocalDisk', () => {
           }
         });
 
-        await expect(
-          disk.put('data.bin', 'replacement', { signal: controller.signal }),
-        ).rejects.toBe(reason);
+        await expect(disk.put('data.bin', 'replacement', { signal: controller.signal })).rejects.toBe(reason);
 
         expect(write).toHaveBeenCalledTimes(2);
         expect(await disk.getText('data.bin')).toBe('original');
@@ -220,10 +229,13 @@ describe('LocalDisk', () => {
 
       it('skips streamed empty chunks without treating them as zero progress', async () => {
         const write = await limitWrites(0);
-        const result = await disk.put('empty.bin', (async function* () {
-          yield Buffer.alloc(0);
-          yield Buffer.alloc(0);
-        })());
+        const result = await disk.put(
+          'empty.bin',
+          (async function* () {
+            yield Buffer.alloc(0);
+            yield Buffer.alloc(0);
+          })(),
+        );
 
         expect(result.size).toBe(0);
         expect((await disk.stat('empty.bin')).size).toBe(0);
@@ -244,9 +256,7 @@ describe('LocalDisk', () => {
               truncateSync(join(tmp, file), 1);
             })(),
           ),
-        ).rejects.toThrow(
-          new StorageError('Local disk write size does not match the written body for "data.bin"'),
-        );
+        ).rejects.toThrow(new StorageError('Local disk write size does not match the written body for "data.bin"'));
 
         expect(await disk.getText('data.bin')).toBe('original');
         expect((await disk.stat('data.bin')).metadata).toEqual({ version: 'original' });
@@ -257,10 +267,13 @@ describe('LocalDisk', () => {
     it('leaves no temp files, after success or failure', async () => {
       await disk.put('ok.txt', 'x');
       await expect(
-        disk.put('ok.txt', (async function* () {
-          yield Buffer.from('partial');
-          throw new Error('boom');
-        })()),
+        disk.put(
+          'ok.txt',
+          (async function* () {
+            yield Buffer.from('partial');
+            throw new Error('boom');
+          })(),
+        ),
       ).rejects.toThrow('boom');
 
       expect(readdirSync(join(root, '.nest-storage', 'tmp'))).toEqual([]);
@@ -274,11 +287,14 @@ describe('LocalDisk', () => {
 
       let release!: () => void;
       const gate = new Promise<void>((resolve) => (release = resolve));
-      const writing = disk.put('big.txt', (async function* () {
-        yield Buffer.from(after.slice(0, 1000));
-        await gate;
-        yield Buffer.from(after.slice(1000));
-      })());
+      const writing = disk.put(
+        'big.txt',
+        (async function* () {
+          yield Buffer.from(after.slice(0, 1000));
+          await gate;
+          yield Buffer.from(after.slice(1000));
+        })(),
+      );
 
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(await disk.getText('big.txt')).toBe(before);
@@ -320,11 +336,14 @@ describe('LocalDisk', () => {
       await expect(disk.get(key)).rejects.toBeInstanceOf(StorageInvalidKeyError);
     });
 
-    it.runIf(process.platform === 'darwin')('keys that differ only in case are one file on a case-insensitive file system', async () => {
-      await disk.put('Photo.jpg', 'upper');
-      await disk.put('photo.jpg', 'lower');
-      expect(await disk.getText('Photo.jpg')).toBe('lower');
-    });
+    it.runIf(process.platform === 'darwin')(
+      'keys that differ only in case are one file on a case-insensitive file system',
+      async () => {
+        await disk.put('Photo.jpg', 'upper');
+        await disk.put('photo.jpg', 'lower');
+        expect(await disk.getText('Photo.jpg')).toBe('lower');
+      },
+    );
   });
 
   describe('metadata sidecars', () => {

@@ -1,7 +1,20 @@
 import type { LocalDiskOptions } from '../interfaces/disk-options.interface.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants, createReadStream, mkdirSync, realpathSync, type Stats } from 'node:fs';
-import { copyFile, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, unlink, writeFile, type FileHandle } from 'node:fs/promises';
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  unlink,
+  writeFile,
+  type FileHandle,
+} from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { contentTypeFromKey } from '../utils/content-type.util.js';
 import { assertValidKey } from '../utils/keys.util.js';
@@ -96,12 +109,7 @@ export class LocalDisk extends StorageDisk {
         let offset = 0;
         while (offset < chunk.byteLength) {
           file.signal?.throwIfAborted();
-          const { bytesWritten } = await handle.write(
-            chunk,
-            offset,
-            chunk.byteLength - offset,
-            null,
-          );
+          const { bytesWritten } = await handle.write(chunk, offset, chunk.byteLength - offset, null);
           if (bytesWritten === 0) {
             throw new StorageError(`Local disk write made no progress for "${key}"`);
           }
@@ -113,9 +121,7 @@ export class LocalDisk extends StorageDisk {
       await handle.sync();
       const stats = await handle.stat();
       if (stats.size !== size) {
-        throw new StorageError(
-          `Local disk write size does not match the written body for "${key}"`,
-        );
+        throw new StorageError(`Local disk write size does not match the written body for "${key}"`);
       }
 
       await handle.close();
@@ -394,7 +400,7 @@ export class LocalDisk extends StorageDisk {
       try {
         const real = await realpath(existing);
         if (!this.inside(real)) {
-          throw new StorageInvalidKeyError('the key leads outside the disk\'s root through a link');
+          throw new StorageInvalidKeyError("the key leads outside the disk's root through a link");
         }
         if (!(await lstat(real)).isDirectory()) {
           throw new StorageKeyConflictError(key);
@@ -416,7 +422,7 @@ export class LocalDisk extends StorageDisk {
       }
 
       if (!(await this.parentInside(target))) {
-        throw new StorageInvalidKeyError('the key leads outside the disk\'s root through a link');
+        throw new StorageInvalidKeyError("the key leads outside the disk's root through a link");
       }
     }
   }

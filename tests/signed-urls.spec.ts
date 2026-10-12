@@ -46,7 +46,11 @@ describe('app-served signed URLs', () => {
     expect(url.searchParams.get('method')).toBe('PUT');
     expect(url.searchParams.get('type')).toBe('image/png');
     expect(url.searchParams.get('length')).toBe('12');
-    expect(upload).toMatchObject({ method: 'PUT', headers: { 'content-type': 'image/png' }, expiresAt: new Date(now + 15 * 60_000) });
+    expect(upload).toMatchObject({
+      method: 'PUT',
+      headers: { 'content-type': 'image/png' },
+      expiresAt: new Date(now + 15 * 60_000),
+    });
   });
 
   it('returns only the claims that were signed', async () => {
@@ -88,7 +92,10 @@ describe('app-served signed URLs', () => {
     ['an expiry of more than 12 digits', (u: URL) => u.searchParams.set('expires', '1'.repeat(13))],
     ['a repeated signature', (u: URL) => u.searchParams.append('signature', u.searchParams.get('signature')!)],
     ['a dropped type', (u: URL) => u.searchParams.delete('type')],
-    ['a signature from another key', (u: URL) => u.searchParams.set('signature', Buffer.alloc(32, 1).toString('base64url'))],
+    [
+      'a signature from another key',
+      (u: URL) => u.searchParams.set('signature', Buffer.alloc(32, 1).toString('base64url')),
+    ],
   ])('refuses %s as invalid', async (_label, tamper) => {
     const url = new URL((await disk.signedUpload('a.bin', { contentType: 'application/pdf', contentLength: 12 })).url);
     tamper(url);
@@ -129,8 +136,16 @@ describe('app-served signed URLs', () => {
 
 describe('signedUrls options', () => {
   it.each([
-    ['a base URL with credentials', { baseUrl: 'https://user:pass@api.example.com/files', keys: [key32] }, '`signedUrls.baseUrl`'],
-    ['a base URL with a fragment', { baseUrl: 'https://api.example.com/files#x', keys: [key32] }, '`signedUrls.baseUrl`'],
+    [
+      'a base URL with credentials',
+      { baseUrl: 'https://user:pass@api.example.com/files', keys: [key32] },
+      '`signedUrls.baseUrl`',
+    ],
+    [
+      'a base URL with a fragment',
+      { baseUrl: 'https://api.example.com/files#x', keys: [key32] },
+      '`signedUrls.baseUrl`',
+    ],
     ['a non-http base URL', { baseUrl: 'ftp://api.example.com/files', keys: [key32] }, '`signedUrls.baseUrl`'],
     ['keys that are not an array', { baseUrl, keys: key32 as never }, '`signedUrls.keys` needs at least one key'],
     ['a weak second key', { baseUrl, keys: [key32, 'short'] }, '`signedUrls.keys[1]`'],

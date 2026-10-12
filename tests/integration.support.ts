@@ -198,7 +198,12 @@ export function createFilesController(api: UploadApi): Type<unknown> {
       @Req() req: unknown,
       @Res({ passthrough: true }) res: unknown,
     ) {
-      return serveFile(this.storage.disk(disk), key, { req, res, disposition: inline ? 'inline' : undefined, filename });
+      return serveFile(this.storage.disk(disk), key, {
+        req,
+        res,
+        disposition: inline ? 'inline' : undefined,
+        filename,
+      });
     }
 
     @Get('stat/:disk')
@@ -212,8 +217,16 @@ export function createFilesController(api: UploadApi): Type<unknown> {
     }
 
     @Get('list/:disk')
-    list(@Param('disk') disk: string, @Query('prefix') prefix?: string, @Query('cursor') cursor?: string, @Query('limit') limit?: string) {
-      return this.storage.disk(disk).list({ prefix, cursor, limit: limit === undefined ? undefined : Number(limit) }).catch(asHttp);
+    list(
+      @Param('disk') disk: string,
+      @Query('prefix') prefix?: string,
+      @Query('cursor') cursor?: string,
+      @Query('limit') limit?: string,
+    ) {
+      return this.storage
+        .disk(disk)
+        .list({ prefix, cursor, limit: limit === undefined ? undefined : Number(limit) })
+        .catch(asHttp);
     }
 
     @Get('list-all/:disk')
@@ -276,7 +289,11 @@ export function createFilesController(api: UploadApi): Type<unknown> {
 
       const photoKey = `photos/${randomUUID()}${type === 'image/png' ? '.png' : '.jpg'}`;
       const { body } = await this.privateDisk.get(key);
-      await this.publicDisk.put(photoKey, body, { contentType: type, contentLength: file.size, cacheControl: 'public, max-age=31536000, immutable' });
+      await this.publicDisk.put(photoKey, body, {
+        contentType: type,
+        contentLength: file.size,
+        cacheControl: 'public, max-age=31536000, immutable',
+      });
       await this.privateDisk.delete(key);
       return { key: photoKey, url: this.publicDisk.url(photoKey) };
     }
@@ -298,8 +315,13 @@ export function createFilesController(api: UploadApi): Type<unknown> {
     }
 
     @Post('signed-upload/:disk')
-    signedUpload(@Param('disk') disk: string, @Body() body: { key: string; contentType: string; contentLength?: number }) {
-      return this.storage.disk(disk).signedUpload(body.key, { contentType: body.contentType, contentLength: body.contentLength, expiresIn: '5m' });
+    signedUpload(
+      @Param('disk') disk: string,
+      @Body() body: { key: string; contentType: string; contentLength?: number },
+    ) {
+      return this.storage
+        .disk(disk)
+        .signedUpload(body.key, { contentType: body.contentType, contentLength: body.contentLength, expiresIn: '5m' });
     }
 
     @Get('signed')
@@ -375,5 +397,8 @@ export function useFakeS3(): FakeS3 {
 /** Objects in the fake bucket under a disk's prefix, without it. */
 export function storedKeys(fake: FakeS3, disk: string): string[] {
   const prefix = `shop/${disk}/`;
-  return [...fake.objects.keys()].filter((key) => key.startsWith(prefix)).map((key) => key.slice(prefix.length)).sort();
+  return [...fake.objects.keys()]
+    .filter((key) => key.startsWith(prefix))
+    .map((key) => key.slice(prefix.length))
+    .sort();
 }

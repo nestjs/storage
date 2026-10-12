@@ -36,7 +36,10 @@ describe.each(adapters.map((a) => a.name))('signed URLs on %s', (adapter) => {
       return res.body[0].key;
     };
     const signedUrl = async (key: string, query: Record<string, string> = {}): Promise<string> => {
-      const res = await http().get('/signed-url/private').query({ key, ...query }).expect(200);
+      const res = await http()
+        .get('/signed-url/private')
+        .query({ key, ...query })
+        .expect(200);
       return clientUrl(res.body.url, ctx.url);
     };
     const signedUpload = async (body: { key: string; contentType: string; contentLength?: number }) => {
@@ -111,11 +114,19 @@ describe.each(adapters.map((a) => a.name))('signed URLs on %s', (adapter) => {
     });
 
     it('a signed upload URL takes the exact bytes from a plain HTTP client, and the app then serves them', async () => {
-      const upload = await signedUpload({ key: 'incoming/photo.png', contentType: 'image/png', contentLength: PNG.length });
+      const upload = await signedUpload({
+        key: 'incoming/photo.png',
+        contentType: 'image/png',
+        contentLength: PNG.length,
+      });
       expect(upload).toMatchObject({ method: 'PUT', headers: { 'content-type': 'image/png' } });
       expect(new Date(upload.expiresAt).getTime()).toBeGreaterThan(Date.now());
 
-      const put = await fetch(clientUrl(upload.url, ctx.url), { method: upload.method, headers: sendable(upload.headers), body: PNG });
+      const put = await fetch(clientUrl(upload.url, ctx.url), {
+        method: upload.method,
+        headers: sendable(upload.headers),
+        body: PNG,
+      });
       expect(put.status).toBe(200);
       expect(put.headers.get('etag')).toMatch(/^".+"$/);
 
@@ -126,24 +137,38 @@ describe.each(adapters.map((a) => a.name))('signed URLs on %s', (adapter) => {
     });
 
     it('a signed upload refuses another type or another length, and stores nothing', async () => {
-      const upload = await signedUpload({ key: 'incoming/strict.png', contentType: 'image/png', contentLength: PNG.length });
+      const upload = await signedUpload({
+        key: 'incoming/strict.png',
+        contentType: 'image/png',
+        contentLength: PNG.length,
+      });
       const url = clientUrl(upload.url, ctx.url);
 
       const wrongType = await fetch(url, { method: 'PUT', headers: { 'content-type': 'text/html' }, body: PNG });
       expect(wrongType.status).toBe(403);
       refusedByStore('signature mismatch');
 
-      const wrongLength = await fetch(url, { method: 'PUT', headers: sendable(upload.headers), body: Buffer.concat([PNG, PNG]) });
+      const wrongLength = await fetch(url, {
+        method: 'PUT',
+        headers: sendable(upload.headers),
+        body: Buffer.concat([PNG, PNG]),
+      });
       expect(wrongLength.status).toBe(403);
       refusedByStore('signature mismatch');
 
-      expect((await http().get('/exists/private').query({ key: 'incoming/strict.png' })).body).toEqual({ exists: false });
+      expect((await http().get('/exists/private').query({ key: 'incoming/strict.png' })).body).toEqual({
+        exists: false,
+      });
     });
 
     it('a signed download URL does not upload, and an upload URL does not download', async () => {
       const key = await uploadPrivate(PDF, 'fixed.pdf');
       const download = await signedUrl(key);
-      const overwrite = await fetch(download, { method: 'PUT', headers: { 'content-type': 'application/pdf' }, body: HTML });
+      const overwrite = await fetch(download, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/pdf' },
+        body: HTML,
+      });
       expect(overwrite.status).toBe(403);
       refusedByStore('signature mismatch');
 
@@ -156,11 +181,20 @@ describe.each(adapters.map((a) => a.name))('signed URLs on %s', (adapter) => {
     });
 
     it('hands out an upload URL, checks the uploaded bytes, and moves only an image onto the public disk', async () => {
-      const image = await signedUpload({ key: 'incoming/photo-1', contentType: 'image/png', contentLength: PNG.length });
-      await fetch(clientUrl(image.url, ctx.url), { method: 'PUT', headers: sendable(image.headers), body: PNG }).then((res) => expect(res.status).toBe(200));
+      const image = await signedUpload({
+        key: 'incoming/photo-1',
+        contentType: 'image/png',
+        contentLength: PNG.length,
+      });
+      await fetch(clientUrl(image.url, ctx.url), { method: 'PUT', headers: sendable(image.headers), body: PNG }).then(
+        (res) => expect(res.status).toBe(200),
+      );
 
       const done = await http().post('/photos/complete').send({ key: 'incoming/photo-1' }).expect(201);
-      expect(done.body).toEqual({ key: expect.stringMatching(/^photos\/[0-9a-f-]{36}\.png$/), url: `${PUBLIC_URL}/${done.body.key}` });
+      expect(done.body).toEqual({
+        key: expect.stringMatching(/^photos\/[0-9a-f-]{36}\.png$/),
+        url: `${PUBLIC_URL}/${done.body.key}`,
+      });
       const served = await fetchBytes(`${ctx.url}/files/public?key=${encodeURIComponent(done.body.key)}&inline=1`);
       expect(served.body).toEqual(PNG);
       expect(served.res.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
@@ -168,7 +202,9 @@ describe.each(adapters.map((a) => a.name))('signed URLs on %s', (adapter) => {
 
       // The client claimed an image, and sent a page
       const lie = await signedUpload({ key: 'incoming/photo-2', contentType: 'image/png', contentLength: HTML.length });
-      await fetch(clientUrl(lie.url, ctx.url), { method: 'PUT', headers: sendable(lie.headers), body: HTML }).then((res) => expect(res.status).toBe(200));
+      await fetch(clientUrl(lie.url, ctx.url), { method: 'PUT', headers: sendable(lie.headers), body: HTML }).then(
+        (res) => expect(res.status).toBe(200),
+      );
       await http().post('/photos/complete').send({ key: 'incoming/photo-2' }).expect(415);
       expect((await http().get('/exists/private').query({ key: 'incoming/photo-2' })).body).toEqual({ exists: false });
 
@@ -177,26 +213,48 @@ describe.each(adapters.map((a) => a.name))('signed URLs on %s', (adapter) => {
 
     it.runIf(presigns)("the app's own signed-URL routes answer 404 for a disk that presigns elsewhere", async () => {
       await http().get('/signed').query({ key: 'anything.pdf', expires: '9999999999', signature: 'x' }).expect(404);
-      await http().put('/signed').query({ key: 'anything.pdf' }).set('content-type', 'application/pdf').send(PDF).expect(404);
+      await http()
+        .put('/signed')
+        .query({ key: 'anything.pdf' })
+        .set('content-type', 'application/pdf')
+        .send(PDF)
+        .expect(404);
     });
 
-    it.runIf(!presigns)('refuses a signed upload of a type the adapter parses before the handler (400), and stores nothing', async () => {
-      const upload = await signedUpload({ key: 'incoming/data.json', contentType: 'application/json' });
-      const res = await fetch(clientUrl(upload.url, ctx.url), { method: 'PUT', headers: sendable(upload.headers), body: '{"a":1}' });
-      expect(res.status).toBe(400);
-      expect(((await res.json()) as { message: string }).message).toBe('The upload body was already parsed; signed uploads need the raw request body');
-      expect((await http().get('/exists/private').query({ key: 'incoming/data.json' })).body).toEqual({ exists: false });
-    });
+    it.runIf(!presigns)(
+      'refuses a signed upload of a type the adapter parses before the handler (400), and stores nothing',
+      async () => {
+        const upload = await signedUpload({ key: 'incoming/data.json', contentType: 'application/json' });
+        const res = await fetch(clientUrl(upload.url, ctx.url), {
+          method: 'PUT',
+          headers: sendable(upload.headers),
+          body: '{"a":1}',
+        });
+        expect(res.status).toBe(400);
+        expect(((await res.json()) as { message: string }).message).toBe(
+          'The upload body was already parsed; signed uploads need the raw request body',
+        );
+        expect((await http().get('/exists/private').query({ key: 'incoming/data.json' })).body).toEqual({
+          exists: false,
+        });
+      },
+    );
 
     it.runIf(!presigns)('refuses an upload over maxSize when the URL was signed without a length (413)', async () => {
       const upload = await signedUpload({ key: 'incoming/unsized.bin', contentType: 'application/octet-stream' });
       const url = clientUrl(upload.url, ctx.url);
-      const tooBig = await fetch(url, { method: 'PUT', headers: sendable(upload.headers), body: Buffer.alloc(MiB + 1) });
+      const tooBig = await fetch(url, {
+        method: 'PUT',
+        headers: sendable(upload.headers),
+        body: Buffer.alloc(MiB + 1),
+      });
       expect(tooBig.status).toBe(413);
 
       const fits = await fetch(url, { method: 'PUT', headers: sendable(upload.headers), body: Buffer.alloc(1024, 1) });
       expect(fits.status).toBe(200);
-      expect((await http().get('/stat/private').query({ key: 'incoming/unsized.bin' })).body).toMatchObject({ size: 1024 });
+      expect((await http().get('/stat/private').query({ key: 'incoming/unsized.bin' })).body).toMatchObject({
+        size: 1024,
+      });
     });
   });
 });

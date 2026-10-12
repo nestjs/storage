@@ -65,7 +65,10 @@ describe('StorageModule registration', () => {
     @Module({ providers: [ExistingConfig], exports: [ExistingConfig] })
     class ConfigModule {}
 
-    const moduleRef = await compile([StorageModule.forRootAsync({ imports: [ConfigModule], useExisting: ExistingConfig })], [UsesDefault]);
+    const moduleRef = await compile(
+      [StorageModule.forRootAsync({ imports: [ConfigModule], useExisting: ExistingConfig })],
+      [UsesDefault],
+    );
     expect(moduleRef.get(UsesDefault).disk).toBe(disk);
   });
 
@@ -92,7 +95,9 @@ describe('StorageModule registration', () => {
   });
 
   it('a factory with no disks of its own leaves the top-level ones', async () => {
-    const moduleRef = await compile([StorageModule.forRootAsync({ imports: [SettingsModule], disks: { main: SettingsDisk }, useFactory: () => ({}) })]);
+    const moduleRef = await compile([
+      StorageModule.forRootAsync({ imports: [SettingsModule], disks: { main: SettingsDisk }, useFactory: () => ({}) }),
+    ]);
     expect(moduleRef.get(StorageDisk)).toBeInstanceOf(SettingsDisk);
   });
 
@@ -115,13 +120,17 @@ describe('StorageModule registration', () => {
   });
 
   it.each(['a b', '-leading', 'with/slash', ''])('refuses the disk name %j returned by a factory', async (name) => {
-    const moduleRef = compile([StorageModule.forRootAsync({ useFactory: () => ({ disks: { [name]: new InMemoryDisk() } }) })]);
+    const moduleRef = compile([
+      StorageModule.forRootAsync({ useFactory: () => ({ disks: { [name]: new InMemoryDisk() } }) }),
+    ]);
     await expect(moduleRef).rejects.toThrow(`"${name}" is not a valid disk name`);
   });
 
   it('accepts names with dots, dashes and underscores', async () => {
     const disk = new InMemoryDisk();
-    const moduleRef = await compile([StorageModule.forRoot({ default: 'eu.private_v2-a', disks: { 'eu.private_v2-a': disk, b: new InMemoryDisk() } })]);
+    const moduleRef = await compile([
+      StorageModule.forRoot({ default: 'eu.private_v2-a', disks: { 'eu.private_v2-a': disk, b: new InMemoryDisk() } }),
+    ]);
     expect(moduleRef.get(getDiskToken('eu.private_v2-a'))).toBe(disk);
   });
 });
@@ -148,9 +157,13 @@ describe('an injected disk that is not configured', () => {
 
 describe('StorageModule lifecycle', () => {
   it('closes every disk on shutdown, even when one of them fails to close', async () => {
-    const failing = Object.assign(new InMemoryDisk(), { close: vi.fn(async () => Promise.reject(new Error('socket stuck'))) });
+    const failing = Object.assign(new InMemoryDisk(), {
+      close: vi.fn(async () => Promise.reject(new Error('socket stuck'))),
+    });
     const healthy = Object.assign(new InMemoryDisk(), { close: vi.fn(async () => undefined) });
-    const moduleRef = await compile([StorageModule.forRoot({ default: 'a', disks: { a: failing, b: healthy, plain: new InMemoryDisk() } })]);
+    const moduleRef = await compile([
+      StorageModule.forRoot({ default: 'a', disks: { a: failing, b: healthy, plain: new InMemoryDisk() } }),
+    ]);
     await moduleRef.init();
 
     await expect(moduleRef.close()).resolves.toBeUndefined();

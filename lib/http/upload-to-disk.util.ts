@@ -64,8 +64,7 @@ export function uploadToDisk(options: UploadToDiskOptions = {}): UploadStorageEn
   if (options.contentTypeSampleBytes !== undefined && options.detectContentType === undefined) {
     throw new TypeError('uploadToDisk(): `contentTypeSampleBytes` requires `detectContentType`');
   }
-  const contentTypeSampleBytes =
-    options.contentTypeSampleBytes ?? DEFAULT_CONTENT_TYPE_SAMPLE_BYTES;
+  const contentTypeSampleBytes = options.contentTypeSampleBytes ?? DEFAULT_CONTENT_TYPE_SAMPLE_BYTES;
   if (
     options.contentTypeSampleBytes !== undefined &&
     (!Number.isSafeInteger(contentTypeSampleBytes) ||
@@ -121,9 +120,7 @@ export function uploadToDisk(options: UploadToDiskOptions = {}): UploadStorageEn
           }
         };
 
-        const sampleBytes = options.detectContentType
-          ? Math.max(SNIFF_BYTES, contentTypeSampleBytes)
-          : SNIFF_BYTES;
+        const sampleBytes = options.detectContentType ? Math.max(SNIFF_BYTES, contentTypeSampleBytes) : SNIFF_BYTES;
         await readHead(sampleBytes);
         const sample = Buffer.concat(head, Math.min(headLength, sampleBytes));
 
@@ -143,7 +140,11 @@ export function uploadToDisk(options: UploadToDiskOptions = {}): UploadStorageEn
           throw new UnsupportedMediaTypeException(`File type not allowed. Allowed types: ${allowed.join(', ')}`);
         }
 
-        const info: UploadFileInfo = { ...declared, contentType: detected, extension: extensionForContentType(detected) };
+        const info: UploadFileInfo = {
+          ...declared,
+          contentType: detected,
+          extension: extensionForContentType(detected),
+        };
         const key = options.key ? await options.key(info, req) : `${randomUUID()}${info.extension}`;
 
         const body = async function* () {

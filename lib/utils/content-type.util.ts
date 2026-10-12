@@ -87,8 +87,7 @@ export function extensionForContentType(type: string | undefined): string {
 export const SNIFF_BYTES = 16;
 
 const startsWith = (bytes: Uint8Array, signature: number[], offset = 0) =>
-  bytes.length >= offset + signature.length &&
-  signature.every((byte, i) => bytes[offset + i] === byte);
+  bytes.length >= offset + signature.length && signature.every((byte, i) => bytes[offset + i] === byte);
 const ascii = (text: string) => [...text].map((c) => c.charCodeAt(0));
 
 /**

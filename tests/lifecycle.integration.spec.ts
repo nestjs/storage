@@ -8,13 +8,7 @@
 import { Controller, type DynamicModule, Get, Inject, Injectable, Module } from '@nestjs/common';
 import request from 'supertest';
 import { type AdapterName, adapters, createApp } from './support/adapters.js';
-import {
-  InMemoryDisk,
-  Storage,
-  STORAGE_MODULE_OPTIONS,
-  StorageDisk,
-  StorageModule,
-} from '../lib/index.js';
+import { InMemoryDisk, Storage, STORAGE_MODULE_OPTIONS, StorageDisk, StorageModule } from '../lib/index.js';
 import {
   createFilesController,
   DiskFactory,
@@ -80,7 +74,11 @@ function configuredDiskClass(factory: DiskFactory) {
   return ConfiguredDisk;
 }
 
-async function boot(adapter: AdapterName, imports: Array<DynamicModule>, options: Parameters<typeof createApp>[2] = {}) {
+async function boot(
+  adapter: AdapterName,
+  imports: Array<DynamicModule>,
+  options: Parameters<typeof createApp>[2] = {},
+) {
   @Module({ imports, controllers: [createFilesController(uploadApis[adapter]), DisksController] })
   class AppModule {}
 
@@ -101,19 +99,27 @@ describe.each(adapters.map((a) => a.name))('lifecycle on %s', (adapter) => {
         StorageModule.forRootAsync({
           imports: [configModule(config)],
           inject: [CONFIG],
-          useFactory: async (injected: AppConfig) => ({ default: 'private', disks: { public: injected.public, private: injected.private } }),
+          useFactory: async (injected: AppConfig) => ({
+            default: 'private',
+            disks: { public: injected.public, private: injected.private },
+          }),
         }),
       ]);
 
       try {
         const http = request(app.getHttpServer());
-        expect((await http.get('/disks').expect(200)).body).toEqual({ names: ['public', 'private'], default: 'private' });
+        expect((await http.get('/disks').expect(200)).body).toEqual({
+          names: ['public', 'private'],
+          default: 'private',
+        });
 
         const upload = await http.post('/public').attach('file', PNG, { filename: 'async.png' }).expect(201);
         expect(upload.body.url).toBe(`${PUBLIC_URL}/uploads/async.png`);
         expect(await config.public.getBuffer('uploads/async.png')).toEqual(PNG);
 
-        const [doc] = (await request(app.getHttpServer()).post('/private').attach('docs', PDF, { filename: 'a.pdf' }).expect(201)).body;
+        const [doc] = (
+          await request(app.getHttpServer()).post('/private').attach('docs', PDF, { filename: 'a.pdf' }).expect(201)
+        ).body;
         expect(await config.private.exists(doc.key)).toBe(true);
       } finally {
         await app.close();
@@ -144,14 +150,26 @@ describe.each(adapters.map((a) => a.name))('lifecycle on %s', (adapter) => {
 
     it("the README's testing recipe: overriding STORAGE_MODULE_OPTIONS swaps the app's disks", async () => {
       const config = await appConfig(factory);
-      const production = { public: new InMemoryDisk({ publicUrl: 'https://prod.example' }), private: new InMemoryDisk() };
-      const app = await boot(adapter, [StorageModule.forRootAsync({ useFactory: () => ({ default: 'private', disks: production }) })], {
-        override: (builder) =>
-          builder.overrideProvider(STORAGE_MODULE_OPTIONS).useValue({ default: 'private', disks: { public: config.public, private: config.private } }),
-      });
+      const production = {
+        public: new InMemoryDisk({ publicUrl: 'https://prod.example' }),
+        private: new InMemoryDisk(),
+      };
+      const app = await boot(
+        adapter,
+        [StorageModule.forRootAsync({ useFactory: () => ({ default: 'private', disks: production }) })],
+        {
+          override: (builder) =>
+            builder
+              .overrideProvider(STORAGE_MODULE_OPTIONS)
+              .useValue({ default: 'private', disks: { public: config.public, private: config.private } }),
+        },
+      );
 
       try {
-        const upload = await request(app.getHttpServer()).post('/public').attach('file', PNG, { filename: 'swapped.png' }).expect(201);
+        const upload = await request(app.getHttpServer())
+          .post('/public')
+          .attach('file', PNG, { filename: 'swapped.png' })
+          .expect(201);
         expect(upload.body.url).toBe(`${PUBLIC_URL}/uploads/swapped.png`);
         expect(await config.public.exists('uploads/swapped.png')).toBe(true);
         expect(production.public.keys()).toEqual([]);
@@ -169,7 +187,12 @@ describe.each(adapters.map((a) => a.name))('lifecycle on %s', (adapter) => {
       config.private.close = async () => {
         closed.push('private');
       };
-      const app = await boot(adapter, [StorageModule.forRoot({ default: 'private', disks: { public: config.public, private: config.private, alias: config.public } })]);
+      const app = await boot(adapter, [
+        StorageModule.forRoot({
+          default: 'private',
+          disks: { public: config.public, private: config.private, alias: config.public },
+        }),
+      ]);
       const url = await app.getUrl();
 
       await request(app.getHttpServer()).post('/public').attach('file', PNG, { filename: 'bye.png' }).expect(201);
@@ -182,8 +205,12 @@ describe.each(adapters.map((a) => a.name))('lifecycle on %s', (adapter) => {
     it('two apps in one process share the upload engine and each stores onto its own disks, also after one closes', async () => {
       const first = await appConfig(factory);
       const second = await appConfig(factory);
-      const one = await boot(adapter, [StorageModule.forRoot({ default: 'private', disks: { public: first.public, private: first.private } })]);
-      const two = await boot(adapter, [StorageModule.forRoot({ default: 'private', disks: { public: second.public, private: second.private } })]);
+      const one = await boot(adapter, [
+        StorageModule.forRoot({ default: 'private', disks: { public: first.public, private: first.private } }),
+      ]);
+      const two = await boot(adapter, [
+        StorageModule.forRoot({ default: 'private', disks: { public: second.public, private: second.private } }),
+      ]);
 
       try {
         await request(one.getHttpServer()).post('/public').attach('file', PNG, { filename: 'one.png' }).expect(201);
@@ -192,7 +219,10 @@ describe.each(adapters.map((a) => a.name))('lifecycle on %s', (adapter) => {
         await request(two.getHttpServer()).post('/public').attach('file', PNG, { filename: 'three.png' }).expect(201);
 
         expect((await first.public.list()).entries.map((e) => e.key)).toEqual(['uploads/one.png']);
-        expect((await second.public.list()).entries.map((e) => e.key)).toEqual(['uploads/three.png', 'uploads/two.png']);
+        expect((await second.public.list()).entries.map((e) => e.key)).toEqual([
+          'uploads/three.png',
+          'uploads/two.png',
+        ]);
       } finally {
         await one.close();
         await two.close();
