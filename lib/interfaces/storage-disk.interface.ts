@@ -6,12 +6,7 @@ import type { Duration } from './duration.interface.js';
  * `ReadableStream`, or any async iterable of byte chunks (such as a generator).
  */
 export type StorageBody =
-  | Buffer
-  | Uint8Array
-  | string
-  | Readable
-  | ReadableStream<Uint8Array>
-  | AsyncIterable<Uint8Array>;
+  Buffer | Uint8Array | string | Readable | ReadableStream<Uint8Array> | AsyncIterable<Uint8Array>;
 
 /** A file's metadata, as `stat()` returns it and `get()` returns it next to the body. */
 export interface StorageFile {

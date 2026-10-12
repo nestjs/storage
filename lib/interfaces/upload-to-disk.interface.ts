@@ -57,10 +57,7 @@ export interface UploadToDiskOptions {
    * it is the type the file is stored and served with. Return `undefined` when the type is
    * unknown. The upload waits for it while holding the request, so it must settle promptly.
    */
-  detectContentType?: (
-    bytes: Buffer,
-    file: UploadFileInfo,
-  ) => string | undefined | Promise<string | undefined>;
+  detectContentType?: (bytes: Buffer, file: UploadFileInfo) => string | undefined | Promise<string | undefined>;
   /**
    * Maximum prefix size passed to `detectContentType`. Defaults to 4 KiB; must be a whole
    * number between 1 byte and 64 KiB. This option requires `detectContentType`.

@@ -70,12 +70,14 @@ export class StorageModule extends ConfigurableModuleClass implements OnModuleIn
 
       const logger = new Logger('StorageModule');
       if (inMemory.length > 0) {
-        logger.warn(`The disk(s) ${inMemory.join(', ')} keep files in memory: they are lost on restart and not shared between instances.`);
+        logger.warn(
+          `The disk(s) ${inMemory.join(', ')} keep files in memory: they are lost on restart and not shared between instances.`,
+        );
       }
       if (local.length > 0) {
         logger.warn(
           `The disk(s) ${local.join(', ')} keep files on this instance's file system (LocalDisk): a container's disk is ` +
-            'discarded with the task, and other instances can\'t read the files. Use S3Disk in production, unless the root ' +
+            "discarded with the task, and other instances can't read the files. Use S3Disk in production, unless the root " +
             'is a persistent volume every instance shares.',
         );
       }

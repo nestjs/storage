@@ -5,7 +5,18 @@
  * one process each finding their own disks.
  */
 import multipart from '@fastify/multipart';
-import { Controller, type INestApplication, Module, type NestInterceptor, Post, Req, type Type, UploadedFile, UploadedFiles, UseInterceptors } from '@nestjs/common';
+import {
+  Controller,
+  type INestApplication,
+  Module,
+  type NestInterceptor,
+  Post,
+  Req,
+  type Type,
+  UploadedFile,
+  UploadedFiles,
+  UseInterceptors,
+} from '@nestjs/common';
 import * as express from '@nestjs/platform-express';
 import * as fastify from '@nestjs/platform-fastify/multipart';
 import request from 'supertest';
@@ -25,7 +36,9 @@ function createController(api: UploadApi) {
   @Controller()
   class UploadsController {
     @Post('batch')
-    @UseInterceptors(api.FilesInterceptor('files', 2, { storage: uploadToDisk({ key: (file) => `batch/${file.originalname}` }) }))
+    @UseInterceptors(
+      api.FilesInterceptor('files', 2, { storage: uploadToDisk({ key: (file) => `batch/${file.originalname}` }) }),
+    )
     batch(@UploadedFiles() files: StoredUpload[]) {
       return files.map((file) => file.key);
     }
@@ -49,7 +62,11 @@ function createController(api: UploadApi) {
     }
 
     @Post('pdf-only')
-    @UseInterceptors(api.FileInterceptor('file', { storage: uploadToDisk({ contentTypes: ['application/pdf'], key: () => 'only.pdf' }) }))
+    @UseInterceptors(
+      api.FileInterceptor('file', {
+        storage: uploadToDisk({ contentTypes: ['application/pdf'], key: () => 'only.pdf' }),
+      }),
+    )
     pdfOnly(@UploadedFile() file: StoredUpload) {
       return file;
     }
@@ -59,8 +76,7 @@ function createController(api: UploadApi) {
       api.FileInterceptor('file', {
         storage: uploadToDisk({
           contentTypes: ['text/csv'],
-          detectContentType: (bytes) =>
-            bytes.toString('utf8').startsWith('sku,name\n') ? 'text/csv' : undefined,
+          detectContentType: (bytes) => (bytes.toString('utf8').startsWith('sku,name\n') ? 'text/csv' : undefined),
         }),
       }),
     )
@@ -69,7 +85,9 @@ function createController(api: UploadApi) {
     }
 
     @Post('bad-key')
-    @UseInterceptors(api.FileInterceptor('file', { storage: uploadToDisk({ key: (file) => `../${file.originalname}` }) }))
+    @UseInterceptors(
+      api.FileInterceptor('file', { storage: uploadToDisk({ key: (file) => `../${file.originalname}` }) }),
+    )
     badKey() {}
 
     @Post('unknown-disk')
@@ -116,7 +134,11 @@ describe.each(adapters.map((a) => a.name))('uploads on %s', (adapter) => {
   });
 
   it('stores up to maxCount files onto the default disk', async () => {
-    const res = await http().post('/batch').attach('files', PDF, { filename: 'a.pdf' }).attach('files', JPEG, { filename: 'b.jpg' }).expect(201);
+    const res = await http()
+      .post('/batch')
+      .attach('files', PDF, { filename: 'a.pdf' })
+      .attach('files', JPEG, { filename: 'b.jpg' })
+      .expect(201);
     expect(res.body).toEqual(['batch/a.pdf', 'batch/b.jpg']);
     expect(uploads.keys()).toEqual(['batch/a.pdf', 'batch/b.jpg']);
   });
@@ -133,7 +155,11 @@ describe.each(adapters.map((a) => a.name))('uploads on %s', (adapter) => {
   });
 
   it('builds the key and the metadata from the request and the detected type', async () => {
-    const res = await http().post('/tenant').set('x-tenant', 't1').attach('file', JPEG, { filename: 'x.png', contentType: 'image/png' }).expect(201);
+    const res = await http()
+      .post('/tenant')
+      .set('x-tenant', 't1')
+      .attach('file', JPEG, { filename: 'x.png', contentType: 'image/png' })
+      .expect(201);
 
     expect(res.body).toEqual({ key: 't1/file.jpg', disk: 'tenants', tenant: 't1' });
     expect(await tenants.stat('t1/file.jpg')).toMatchObject({
@@ -144,7 +170,11 @@ describe.each(adapters.map((a) => a.name))('uploads on %s', (adapter) => {
   });
 
   it('a type it does not recognize gets no extension, and is stored as octet-stream', async () => {
-    await http().post('/tenant').set('x-tenant', 'globex').attach('file', Buffer.from('plain text'), { filename: 'a.txt', contentType: 'text/plain' }).expect(201);
+    await http()
+      .post('/tenant')
+      .set('x-tenant', 'globex')
+      .attach('file', Buffer.from('plain text'), { filename: 'a.txt', contentType: 'text/plain' })
+      .expect(201);
 
     expect(await tenants.stat('globex/file.bin')).toMatchObject({
       contentType: 'application/octet-stream',
@@ -153,8 +183,14 @@ describe.each(adapters.map((a) => a.name))('uploads on %s', (adapter) => {
   });
 
   it('refuses an empty file when only some types are allowed', async () => {
-    await http().post('/pdf-only').attach('file', Buffer.alloc(0), { filename: 'empty.pdf', contentType: 'application/pdf' }).expect(415);
-    await http().post('/pdf-only').attach('file', JPEG, { filename: 'a.pdf', contentType: 'application/pdf' }).expect(415);
+    await http()
+      .post('/pdf-only')
+      .attach('file', Buffer.alloc(0), { filename: 'empty.pdf', contentType: 'application/pdf' })
+      .expect(415);
+    await http()
+      .post('/pdf-only')
+      .attach('file', JPEG, { filename: 'a.pdf', contentType: 'application/pdf' })
+      .expect(415);
     expect(uploads.keys()).toEqual([]);
 
     await http().post('/pdf-only').attach('file', PDF, { filename: 'a.pdf' }).expect(201);
@@ -179,10 +215,7 @@ describe.each(adapters.map((a) => a.name))('uploads on %s', (adapter) => {
     expect(await uploads.stat(res.body.key)).toMatchObject({ contentType: 'text/csv' });
 
     const before = uploads.keys();
-    await http()
-      .post('/csv-only')
-      .attach('file', Buffer.from('unknown'), { filename: 'bad.csv' })
-      .expect(415);
+    await http().post('/csv-only').attach('file', Buffer.from('unknown'), { filename: 'bad.csv' }).expect(415);
     expect(uploads.keys()).toEqual(before);
   });
 

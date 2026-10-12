@@ -44,7 +44,13 @@ describe('uploadToDisk() engine', () => {
 
     const { error, info } = await result;
     expect(error).toBeNull();
-    expect(info).toEqual({ key: 'k.png', disk: undefined, size: 116, contentType: 'image/png', etag: expect.any(String) });
+    expect(info).toEqual({
+      key: 'k.png',
+      disk: undefined,
+      size: 116,
+      contentType: 'image/png',
+      etag: expect.any(String),
+    });
     expect((await disk.getBuffer('k.png')).length).toBe(116);
   });
 
@@ -347,7 +353,9 @@ describe('uploadToDisk() engine', () => {
     await disk.put('stored.png', PNG);
     const file = { key: 'stored.png' };
 
-    await new Promise<void>((resolve, reject) => engine._removeFile({}, file, (error) => (error ? reject(error) : resolve())));
+    await new Promise<void>((resolve, reject) =>
+      engine._removeFile({}, file, (error) => (error ? reject(error) : resolve())),
+    );
     expect(disk.keys()).toEqual([]);
     expect(file).toEqual({});
 
@@ -364,17 +372,13 @@ describe('uploadToDisk() engine', () => {
 
   it('validates its options when it is created', () => {
     expect(() => uploadToDisk({ contentTypes: [] })).toThrow('`contentTypes` must be a non-empty array');
-    expect(() => uploadToDisk({ contentTypeSampleBytes: 16 })).toThrow(
-      'requires `detectContentType`',
-    );
+    expect(() => uploadToDisk({ contentTypeSampleBytes: 16 })).toThrow('requires `detectContentType`');
 
     const detectContentType = () => undefined;
     expect(() => uploadToDisk({ detectContentType, contentTypeSampleBytes: 1 })).not.toThrow();
     expect(() => uploadToDisk({ detectContentType, contentTypeSampleBytes: 65_536 })).not.toThrow();
     for (const contentTypeSampleBytes of [0, 1.5, 65_537]) {
-      expect(() => uploadToDisk({ detectContentType, contentTypeSampleBytes })).toThrow(
-        'between 1 and 65536',
-      );
+      expect(() => uploadToDisk({ detectContentType, contentTypeSampleBytes })).toThrow('between 1 and 65536');
     }
   });
 });

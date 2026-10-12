@@ -50,7 +50,14 @@ describe('LocalDisk', () => {
       writeFileSync(join(root, 'imports', '2026', 'batch.csv'), 'id\n1\n');
 
       const page = await disk.list({ prefix: 'imports/' });
-      expect(page.entries).toEqual([{ key: 'imports/2026/batch.csv', size: 5, lastModified: expect.any(Date), etag: expect.stringMatching(/^"5-[0-9a-f]+"$/) }]);
+      expect(page.entries).toEqual([
+        {
+          key: 'imports/2026/batch.csv',
+          size: 5,
+          lastModified: expect.any(Date),
+          etag: expect.stringMatching(/^"5-[0-9a-f]+"$/),
+        },
+      ]);
       expect((await disk.stat('imports/2026/batch.csv')).contentType).toBe('text/csv; charset=utf-8');
     });
 
@@ -99,7 +106,11 @@ describe('LocalDisk', () => {
 
   describe('sidecars', () => {
     it('follow a move: the target keeps the metadata, the source leaves none behind', async () => {
-      await disk.put('in/a.bin', 'x', { contentType: 'application/x-example', metadata: { owner: 'u1' }, cacheControl: 'private' });
+      await disk.put('in/a.bin', 'x', {
+        contentType: 'application/x-example',
+        metadata: { owner: 'u1' },
+        cacheControl: 'private',
+      });
       const before = await disk.stat('in/a.bin');
       expect(sidecars()).toHaveLength(1);
 
@@ -107,7 +118,12 @@ describe('LocalDisk', () => {
 
       expect(sidecars()).toHaveLength(1);
       expect(result).toMatchObject({ contentType: 'application/x-example', etag: before.etag });
-      expect(await disk.stat('out/a.bin')).toMatchObject({ contentType: 'application/x-example', metadata: { owner: 'u1' }, cacheControl: 'private', etag: before.etag });
+      expect(await disk.stat('out/a.bin')).toMatchObject({
+        contentType: 'application/x-example',
+        metadata: { owner: 'u1' },
+        cacheControl: 'private',
+        etag: before.etag,
+      });
     });
 
     it('are copied with the file', async () => {

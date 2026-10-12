@@ -113,7 +113,10 @@ describe('sleep()', () => {
 describe('S3Disk waits between attempts', () => {
   const credentials = { accessKeyId: 'AKID', secretAccessKey: 'secret' };
   const slowDown = () =>
-    new Response('<Error><Code>SlowDown</Code></Error>', { status: 503, headers: { 'content-type': 'application/xml' } });
+    new Response('<Error><Code>SlowDown</Code></Error>', {
+      status: 503,
+      headers: { 'content-type': 'application/xml' },
+    });
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -158,7 +161,13 @@ describe('S3Disk waits between attempts', () => {
       return slowDown();
     }) as typeof globalThis.fetch;
     const retryIf = vi.fn((_error: unknown, attempt: number) => attempt < 2);
-    const disk = new S3Disk({ bucket: 'shop', endpoint: 'http://127.0.0.1:9000', credentials, fetch, retry: { attempts: 5, retryIf, backoff: { delay: 10 } } });
+    const disk = new S3Disk({
+      bucket: 'shop',
+      endpoint: 'http://127.0.0.1:9000',
+      credentials,
+      fetch,
+      retry: { attempts: 5, retryIf, backoff: { delay: 10 } },
+    });
 
     const reading = disk.getText('a.txt').catch((error: unknown) => error);
     await vi.advanceTimersByTimeAsync(100);
@@ -174,7 +183,13 @@ describe('S3Disk waits between attempts', () => {
       calls++;
       return slowDown();
     }) as typeof globalThis.fetch;
-    const disk = new S3Disk({ bucket: 'shop', endpoint: 'http://127.0.0.1:9000', credentials, fetch, retry: { attempts: 3, backoff: { delay: '10s', jitter: 'none' } } });
+    const disk = new S3Disk({
+      bucket: 'shop',
+      endpoint: 'http://127.0.0.1:9000',
+      credentials,
+      fetch,
+      retry: { attempts: 3, backoff: { delay: '10s', jitter: 'none' } },
+    });
     const controller = new AbortController();
     const reason = new Error('user cancelled');
 

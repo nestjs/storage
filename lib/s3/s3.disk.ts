@@ -26,7 +26,14 @@ import { encodeXml, xmlElements, xmlText } from './xml.util.js';
 const MiB = 1024 * 1024;
 const MAX_PARTS = 10_000;
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
-const RETRYABLE_CODES = new Set(['SlowDown', 'InternalError', 'RequestTimeout', 'ServiceUnavailable', 'Throttling', 'ThrottlingException']);
+const RETRYABLE_CODES = new Set([
+  'SlowDown',
+  'InternalError',
+  'RequestTimeout',
+  'ServiceUnavailable',
+  'Throttling',
+  'ThrottlingException',
+]);
 
 interface RequestInit {
   operation: string;
@@ -79,9 +86,17 @@ export class S3Disk extends StorageDisk {
     try {
       endpoint = new URL(options.endpoint ?? `https://s3.${this.region}.amazonaws.com`);
     } catch {
-      throw new TypeError('S3Disk `endpoint` must be an absolute http(s) URL, such as "https://<account>.r2.cloudflarestorage.com"');
+      throw new TypeError(
+        'S3Disk `endpoint` must be an absolute http(s) URL, such as "https://<account>.r2.cloudflarestorage.com"',
+      );
     }
-    if (!/^https?:$/.test(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.search || (endpoint.pathname !== '/' && endpoint.pathname !== '')) {
+    if (
+      !/^https?:$/.test(endpoint.protocol) ||
+      endpoint.username ||
+      endpoint.password ||
+      endpoint.search ||
+      (endpoint.pathname !== '/' && endpoint.pathname !== '')
+    ) {
       throw new TypeError('S3Disk `endpoint` must be an absolute http(s) URL without a path, credentials or query');
     }
     this.endpoint = endpoint;
@@ -89,7 +104,9 @@ export class S3Disk extends StorageDisk {
     const hostIsIp = isIP(endpoint.hostname.replace(/^\[|\]$/g, '')) !== 0;
     const dnsCompatible =
       /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(this.bucket) ||
-      (endpoint.protocol === 'http:' && /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(this.bucket) && !this.bucket.includes('..'));
+      (endpoint.protocol === 'http:' &&
+        /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(this.bucket) &&
+        !this.bucket.includes('..'));
     this.pathStyle = options.forcePathStyle === true || hostIsIp || !dnsCompatible;
 
     this.credentials = resolveCredentials(options.credentials);
@@ -134,11 +151,17 @@ export class S3Disk extends StorageDisk {
 
   // --- writes --------------------------------------------------------------------------
 
-  protected async writeObject(key: string, body: AsyncIterable<Buffer>, file: StorageObjectWrite): Promise<StorageWriteResult> {
+  protected async writeObject(
+    key: string,
+    body: AsyncIterable<Buffer>,
+    file: StorageObjectWrite,
+  ): Promise<StorageWriteResult> {
     const fullKey = this.prefix + key;
     const headers = this.writeHeaders(file);
     const partSize =
-      file.contentLength === undefined ? this.partSize : Math.max(this.partSize, Math.ceil(file.contentLength / MAX_PARTS));
+      file.contentLength === undefined
+        ? this.partSize
+        : Math.max(this.partSize, Math.ceil(file.contentLength / MAX_PARTS));
     const parts = new PartReader(body[Symbol.asyncIterator](), partSize);
 
     try {
@@ -183,7 +206,11 @@ export class S3Disk extends StorageDisk {
     });
     const uploadId = xmlText(await init.text(), 'UploadId');
     if (!uploadId) {
-      throw new StorageServiceError({ operation: 'CreateMultipartUpload', code: 'InvalidResponse', message: 'no UploadId' });
+      throw new StorageServiceError({
+        operation: 'CreateMultipartUpload',
+        code: 'InvalidResponse',
+        message: 'no UploadId',
+      });
     }
 
     const etags: string[] = [];
@@ -204,7 +231,10 @@ export class S3Disk extends StorageDisk {
         operation: 'UploadPart',
         method: 'PUT',
         key: fullKey,
-        query: [['partNumber', String(number)], ['uploadId', uploadId]],
+        query: [
+          ['partNumber', String(number)],
+          ['uploadId', uploadId],
+        ],
         headers: { 'content-length': String(data.length) },
         body: data,
         signal: file.signal,
@@ -252,7 +282,9 @@ export class S3Disk extends StorageDisk {
 
       const xml =
         '<CompleteMultipartUpload>' +
-        etags.map((etag, i) => `<Part><PartNumber>${i + 1}</PartNumber><ETag>${encodeXml(etag)}</ETag></Part>`).join('') +
+        etags
+          .map((etag, i) => `<Part><PartNumber>${i + 1}</PartNumber><ETag>${encodeXml(etag)}</ETag></Part>`)
+          .join('') +
         '</CompleteMultipartUpload>';
       const res = await this.send({
         operation: 'CompleteMultipartUpload',
@@ -349,7 +381,14 @@ export class S3Disk extends StorageDisk {
       throw new StorageRangeNotSatisfiableError(key, undefined);
     }
 
-    const res = await this.send({ operation: 'GetObject', method: 'GET', key: this.prefix + key, headers, stream: true, notFoundKey: key });
+    const res = await this.send({
+      operation: 'GetObject',
+      method: 'GET',
+      key: this.prefix + key,
+      headers,
+      stream: true,
+      notFoundKey: key,
+    });
     const file = fileFromHeaders(key, res.headers);
     const body = res.body ? Readable.fromWeb(res.body as import('node:stream/web').ReadableStream) : Readable.from([]);
 
@@ -426,8 +465,15 @@ export class S3Disk extends StorageDisk {
 
   // --- signing -------------------------------------------------------------------------
 
-  protected override async presignGet(key: string, expiresAt: Date, contentDisposition: string | undefined): Promise<string> {
-    const url = this.objectUrl(this.prefix + key, contentDisposition ? [['response-content-disposition', contentDisposition]] : []);
+  protected override async presignGet(
+    key: string,
+    expiresAt: Date,
+    contentDisposition: string | undefined,
+  ): Promise<string> {
+    const url = this.objectUrl(
+      this.prefix + key,
+      contentDisposition ? [['response-content-disposition', contentDisposition]] : [],
+    );
     return presignUrl({
       method: 'GET',
       url,
@@ -437,7 +483,11 @@ export class S3Disk extends StorageDisk {
     }).toString();
   }
 
-  protected override async presignPut(key: string, expiresAt: Date, request: StorageSignedUploadRequest): Promise<StorageSignedUpload> {
+  protected override async presignPut(
+    key: string,
+    expiresAt: Date,
+    request: StorageSignedUploadRequest,
+  ): Promise<StorageSignedUpload> {
     const headers: Record<string, string> = { 'content-type': request.contentType, ...this.encryptionHeaders };
     if (request.contentLength !== undefined) {
       headers['content-length'] = String(request.contentLength);
@@ -474,7 +524,12 @@ export class S3Disk extends StorageDisk {
   private objectUrl(fullKey: string | undefined, query: [string, string][]): URL {
     const path = fullKey === undefined ? '' : encodeKeyPath(fullKey);
     const search = query.length
-      ? '?' + query.map(([name, value]) => (value === '' && isFlag(name) ? encodeRfc3986(name) : `${encodeRfc3986(name)}=${encodeRfc3986(value)}`)).join('&')
+      ? '?' +
+        query
+          .map(([name, value]) =>
+            value === '' && isFlag(name) ? encodeRfc3986(name) : `${encodeRfc3986(name)}=${encodeRfc3986(value)}`,
+          )
+          .join('&')
       : '';
     const origin = `${this.endpoint.protocol}//${this.pathStyle ? this.endpoint.host : `${this.bucket}.${this.endpoint.host}`}`;
     return new URL(`${origin}/${this.pathStyle ? `${this.bucket}/${path}` : path}${search}`);
@@ -515,13 +570,22 @@ export class S3Disk extends StorageDisk {
     });
 
     const controller = new AbortController();
-    const timer = this.timeoutMs > 0 ? setTimeout(() => controller.abort(new DOMException('timeout', 'TimeoutError')), this.timeoutMs) : undefined;
+    const timer =
+      this.timeoutMs > 0
+        ? setTimeout(() => controller.abort(new DOMException('timeout', 'TimeoutError')), this.timeoutMs)
+        : undefined;
     const signal = init.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal;
 
     try {
       let res: Response;
       try {
-        res = await (this.fetchFn ?? globalThis.fetch)(url, { method: init.method, headers, body: init.body as RequestInit['body'], signal, redirect: 'manual' });
+        res = await (this.fetchFn ?? globalThis.fetch)(url, {
+          method: init.method,
+          headers,
+          body: init.body as RequestInit['body'],
+          signal,
+          redirect: 'manual',
+        });
       } catch (error) {
         throw this.transportError(init, error);
       }
@@ -550,11 +614,24 @@ export class S3Disk extends StorageDisk {
     }
 
     const name = (error as Error)?.name;
-    if (name === 'TimeoutError' || (name === 'AbortError' && (error as { cause?: Error })?.cause?.name === 'TimeoutError')) {
-      return new StorageServiceError({ operation: init.operation, code: 'Timeout', message: `no response within ${this.timeoutMs}ms`, cause: error });
+    if (
+      name === 'TimeoutError' ||
+      (name === 'AbortError' && (error as { cause?: Error })?.cause?.name === 'TimeoutError')
+    ) {
+      return new StorageServiceError({
+        operation: init.operation,
+        code: 'Timeout',
+        message: `no response within ${this.timeoutMs}ms`,
+        cause: error,
+      });
     }
     const cause = (error as { cause?: { code?: string } })?.cause;
-    return new StorageServiceError({ operation: init.operation, code: 'NetworkError', message: cause?.code ?? (error as Error)?.message, cause: error });
+    return new StorageServiceError({
+      operation: init.operation,
+      code: 'NetworkError',
+      message: cause?.code ?? (error as Error)?.message,
+      cause: error,
+    });
   }
 
   private responseError(init: RequestInit, res: Response, text: string): Error {
@@ -663,11 +740,20 @@ function isRetryable(error: unknown): boolean {
   if (error.code === 'NetworkError' || error.code === 'Timeout') {
     return true;
   }
-  return RETRYABLE_CODES.has(error.code) || (error.upstreamStatus !== undefined && RETRYABLE_STATUS.has(error.upstreamStatus));
+  return (
+    RETRYABLE_CODES.has(error.code) ||
+    (error.upstreamStatus !== undefined && RETRYABLE_STATUS.has(error.upstreamStatus))
+  );
 }
 
 function statusCode(status: number): string {
-  return status === 404 ? 'NotFound' : status === 403 ? 'Forbidden' : status === 301 || status === 307 ? 'WrongRegionOrEndpoint' : `Http${status}`;
+  return status === 404
+    ? 'NotFound'
+    : status === 403
+      ? 'Forbidden'
+      : status === 301 || status === 307
+        ? 'WrongRegionOrEndpoint'
+        : `Http${status}`;
 }
 
 /** Subresource flags such as `?uploads` and `?delete` are sent without `=`. */
@@ -709,7 +795,13 @@ function resolveCredentials(input: S3DiskOptions['credentials']): () => Promise<
 }
 
 function assertCredentials(value: S3Credentials, where: string) {
-  if (!value || typeof value.accessKeyId !== 'string' || !value.accessKeyId || typeof value.secretAccessKey !== 'string' || !value.secretAccessKey) {
+  if (
+    !value ||
+    typeof value.accessKeyId !== 'string' ||
+    !value.accessKeyId ||
+    typeof value.secretAccessKey !== 'string' ||
+    !value.secretAccessKey
+  ) {
     throw new TypeError(`${where} must have a non-empty \`accessKeyId\` and \`secretAccessKey\``);
   }
 }

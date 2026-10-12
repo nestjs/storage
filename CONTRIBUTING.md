@@ -152,8 +152,8 @@ To ensure consistency throughout the source code, keep these rules in mind as yo
 // We're working on auto-documentation.
 * All public API methods **must be documented**. (Details TBC). -->
 * We follow [Google's JavaScript Style Guide][js-style-guide], but wrap all code at
-  **100 characters**. An automated formatter is available, see
-  [DEVELOPER.md](docs/DEVELOPER.md#clang-format).
+  **120 characters**. Formatting is handled by Prettier: the pre-commit hook formats staged
+  files, `npm run format` formats everything, and CI runs `npm run format:check`.
 
 ## <a name="commit"></a> Commit Message Guidelines
 

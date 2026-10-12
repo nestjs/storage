@@ -26,9 +26,7 @@ export async function createApp(
   let builder = Test.createTestingModule({ imports: [module] });
   if (options.override) builder = options.override(builder);
   const moduleRef = await builder.compile();
-  const app = moduleRef.createNestApplication(
-    adapters.find((a) => a.name === adapter)!.create() as any,
-  );
+  const app = moduleRef.createNestApplication(adapters.find((a) => a.name === adapter)!.create() as any);
   await options.setup?.(app);
   // Listen on loopback up front. Handed a server that isn't listening,
   // supertest binds `::` on a random port per request and connects to

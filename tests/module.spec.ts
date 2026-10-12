@@ -58,13 +58,20 @@ class ConfiguredDisk extends InMemoryDisk {
 }
 
 const compile = (imports: unknown[], providers: unknown[] = [], controllers: unknown[] = []) =>
-  Test.createTestingModule({ imports: imports as never, providers: providers as never, controllers: controllers as never }).compile();
+  Test.createTestingModule({
+    imports: imports as never,
+    providers: providers as never,
+    controllers: controllers as never,
+  }).compile();
 
 describe('StorageModule', () => {
   it('forRoot(): named disks, a default, and injection by name, by type and through Storage', async () => {
     const photos = new InMemoryDisk();
     const invoices = new InMemoryDisk();
-    const moduleRef = await compile([StorageModule.forRoot({ default: 'invoices', disks: { photos, invoices } }), PhotosModule], [InvoicesService]);
+    const moduleRef = await compile(
+      [StorageModule.forRoot({ default: 'invoices', disks: { photos, invoices } }), PhotosModule],
+      [InvoicesService],
+    );
     await moduleRef.init();
 
     const service = moduleRef.get(PhotosService);
@@ -90,18 +97,21 @@ describe('StorageModule', () => {
 
   it('forRootAsync(): disk instances from the factory, a class at the top level', async () => {
     const photos = new InMemoryDisk();
-    const moduleRef = await compile([
-      StorageModule.forRootAsync({
-        imports: [ConfigModule],
-        disks: { invoices: ConfiguredDisk },
-        inject: [CONFIG],
-        useFactory: (config: { bucketName: string }): StorageModuleOptions => ({
-          default: config.bucketName === 'shop-invoices' ? 'photos' : 'invoices',
-          disks: { photos },
+    const moduleRef = await compile(
+      [
+        StorageModule.forRootAsync({
+          imports: [ConfigModule],
+          disks: { invoices: ConfiguredDisk },
+          inject: [CONFIG],
+          useFactory: (config: { bucketName: string }): StorageModuleOptions => ({
+            default: config.bucketName === 'shop-invoices' ? 'photos' : 'invoices',
+            disks: { photos },
+          }),
         }),
-      }),
-      PhotosModule,
-    ], [InvoicesService]);
+        PhotosModule,
+      ],
+      [InvoicesService],
+    );
     await moduleRef.init();
 
     const invoices = moduleRef.get(InvoicesService).invoices;
@@ -154,40 +164,74 @@ describe('StorageModule', () => {
   });
 
   describe('fails at startup', () => {
-    const failure = (promise: Promise<unknown>) => promise.then(() => 'no error', (error: Error) => error.message);
+    const failure = (promise: Promise<unknown>) =>
+      promise.then(
+        () => 'no error',
+        (error: Error) => error.message,
+      );
     const boot = async (imports: unknown[], providers: unknown[] = [], controllers: unknown[] = []) => {
       const moduleRef = await compile(imports, providers, controllers);
       await moduleRef.init();
     };
 
     it('naming the class that injects a disk no configuration provides', async () => {
-      const message = await failure(boot([StorageModule.forRoot({ default: 'photos', disks: { photos: new InMemoryDisk() } })], [], [ArchiveController]));
+      const message = await failure(
+        boot(
+          [StorageModule.forRoot({ default: 'photos', disks: { photos: new InMemoryDisk() } })],
+          [],
+          [ArchiveController],
+        ),
+      );
       expect(message).toBe(
         `ArchiveController injects the disk "archive" (@InjectDisk('archive')), but StorageModule has no disk by that name. Configured disks: photos.`,
       );
 
-      const property = await failure(boot([StorageModule.forRootAsync({ useFactory: () => ({ disks: { photos: new InMemoryDisk() } }) })], [InvoicesService]));
+      const property = await failure(
+        boot(
+          [StorageModule.forRootAsync({ useFactory: () => ({ disks: { photos: new InMemoryDisk() } }) })],
+          [InvoicesService],
+        ),
+      );
       expect(property).toContain(`InvoicesService injects the disk "invoices"`);
     });
 
     it.each([
       [{ disks: {} }, 'StorageModule needs at least one disk'],
-      [{ disks: { a: new InMemoryDisk(), b: new InMemoryDisk() } }, 'several disks are configured (a, b), so `default` must name one of them'],
-      [{ default: 'c', disks: { a: new InMemoryDisk() } }, '`default` is "c", but no disk has that name. Configured disks: a.'],
+      [
+        { disks: { a: new InMemoryDisk(), b: new InMemoryDisk() } },
+        'several disks are configured (a, b), so `default` must name one of them',
+      ],
+      [
+        { default: 'c', disks: { a: new InMemoryDisk() } },
+        '`default` is "c", but no disk has that name. Configured disks: a.',
+      ],
     ])('forRoot(%o)', async (options, message) => {
       expect(await failure(boot([StorageModule.forRoot(options)]))).toContain(message);
     });
 
     it('for a bad disk name or value, when the module is defined', () => {
-      expect(() => StorageModule.forRoot({ disks: { 'my disk': new InMemoryDisk() } })).toThrow('"my disk" is not a valid disk name');
-      expect(() => StorageModule.forRoot({ disks: { a: { put() {} } as never } })).toThrow('disks.a must be a StorageDisk class or instance');
+      expect(() => StorageModule.forRoot({ disks: { 'my disk': new InMemoryDisk() } })).toThrow(
+        '"my disk" is not a valid disk name',
+      );
+      expect(() => StorageModule.forRoot({ disks: { a: { put() {} } as never } })).toThrow(
+        'disks.a must be a StorageDisk class or instance',
+      );
     });
 
     it('when the factory returns a class, a non-disk, or a disk also set at the top level', async () => {
       const cases: [StorageModuleOptions, string][] = [
-        [{ disks: { a: ConfiguredDisk as never } }, 'the forRootAsync() factory returned a class as `disks.a` (ConfiguredDisk)'],
-        [{ disks: { a: {} as never } }, '`disks.a` returned by the forRootAsync() factory must be a StorageDisk instance'],
-        [{ disks: { top: new InMemoryDisk() } }, '`disks.top` is set both at the top level of forRootAsync() and in the options its factory returns'],
+        [
+          { disks: { a: ConfiguredDisk as never } },
+          'the forRootAsync() factory returned a class as `disks.a` (ConfiguredDisk)',
+        ],
+        [
+          { disks: { a: {} as never } },
+          '`disks.a` returned by the forRootAsync() factory must be a StorageDisk instance',
+        ],
+        [
+          { disks: { top: new InMemoryDisk() } },
+          '`disks.top` is set both at the top level of forRootAsync() and in the options its factory returns',
+        ],
       ];
 
       for (const [result, message] of cases) {
@@ -225,12 +269,19 @@ describe('StorageModule', () => {
     const root = mkdtempSync(join(tmpdir(), 'nest-storage-prod-'));
 
     try {
-      const moduleRef = await compile([StorageModule.forRoot({ default: 'uploads', disks: { uploads: new LocalDisk({ root }), scratch: new InMemoryDisk() } })]);
+      const moduleRef = await compile([
+        StorageModule.forRoot({
+          default: 'uploads',
+          disks: { uploads: new LocalDisk({ root }), scratch: new InMemoryDisk() },
+        }),
+      ]);
       await moduleRef.init();
       await moduleRef.close();
 
       const messages = warn.mock.calls.map((call) => String(call[0]));
-      expect(messages.some((m) => m.includes('uploads keep files on this instance') && m.includes('S3Disk'))).toBe(true);
+      expect(messages.some((m) => m.includes('uploads keep files on this instance') && m.includes('S3Disk'))).toBe(
+        true,
+      );
       expect(messages.some((m) => m.includes('scratch keep files in memory'))).toBe(true);
     } finally {
       process.env.NODE_ENV = env;

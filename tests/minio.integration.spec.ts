@@ -33,12 +33,19 @@ describe.skipIf(!minio)('S3Disk against MinIO', () => {
     const port = await freePort();
     endpoint = `http://127.0.0.1:${port}`;
     server = spawn(minio!, ['server', dir, '--address', `127.0.0.1:${port}`, '--quiet'], {
-      env: { ...process.env, MINIO_ROOT_USER: credentials.accessKeyId, MINIO_ROOT_PASSWORD: credentials.secretAccessKey },
+      env: {
+        ...process.env,
+        MINIO_ROOT_USER: credentials.accessKeyId,
+        MINIO_ROOT_PASSWORD: credentials.secretAccessKey,
+      },
       stdio: 'ignore',
     });
 
     for (let i = 0; i < 100; i++) {
-      const ready = await fetch(`${endpoint}/minio/health/ready`).then((r) => r.ok, () => false);
+      const ready = await fetch(`${endpoint}/minio/health/ready`).then(
+        (r) => r.ok,
+        () => false,
+      );
       if (ready) {
         break;
       }
@@ -46,11 +53,25 @@ describe.skipIf(!minio)('S3Disk against MinIO', () => {
     }
 
     const url = new URL(`${endpoint}/shop`);
-    const headers = signRequest({ method: 'PUT', url, headers: { 'x-amz-content-sha256': EMPTY_SHA256 }, payloadHash: EMPTY_SHA256, credentials, region: 'us-east-1' });
+    const headers = signRequest({
+      method: 'PUT',
+      url,
+      headers: { 'x-amz-content-sha256': EMPTY_SHA256 },
+      payloadHash: EMPTY_SHA256,
+      credentials,
+      region: 'us-east-1',
+    });
     const res = await fetch(url, { method: 'PUT', headers });
     expect(res.status).toBe(200);
 
-    disk = new S3Disk({ bucket: 'shop', endpoint, forcePathStyle: true, region: 'us-east-1', credentials, multipart: { partSize: 5 * 1024 * 1024 } });
+    disk = new S3Disk({
+      bucket: 'shop',
+      endpoint,
+      forcePathStyle: true,
+      region: 'us-east-1',
+      credentials,
+      multipart: { partSize: 5 * 1024 * 1024 },
+    });
   }, 30_000);
 
   afterAll(() => {
@@ -65,11 +86,19 @@ describe.skipIf(!minio)('S3Disk against MinIO', () => {
     expect(await disk.getText('docs/a b.txt')).toBe('hello world');
     const partial = await disk.get('docs/a b.txt', { range: { start: 6 } });
     expect(partial.range).toEqual({ start: 6, end: 10 });
-    expect(await disk.stat('docs/a b.txt')).toMatchObject({ size: 11, contentType: 'text/plain; charset=utf-8', metadata: { owner: 'u1' }, cacheControl: 'no-cache' });
+    expect(await disk.stat('docs/a b.txt')).toMatchObject({
+      size: 11,
+      contentType: 'text/plain; charset=utf-8',
+      metadata: { owner: 'u1' },
+      cacheControl: 'no-cache',
+    });
 
     await disk.copy('docs/a b.txt', 'docs/copy.txt');
     await disk.move('docs/copy.txt', 'docs/moved.txt');
-    expect((await disk.list({ prefix: 'docs/' })).entries.map((e) => e.key)).toEqual(['docs/a b.txt', 'docs/moved.txt']);
+    expect((await disk.list({ prefix: 'docs/' })).entries.map((e) => e.key)).toEqual([
+      'docs/a b.txt',
+      'docs/moved.txt',
+    ]);
 
     await disk.delete(['docs/a b.txt', 'docs/moved.txt']);
     expect((await disk.list({ prefix: 'docs/' })).entries).toEqual([]);

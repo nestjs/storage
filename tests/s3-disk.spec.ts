@@ -28,7 +28,11 @@ const s3 = (options: Partial<S3DiskOptions> = {}) =>
     ...options,
   });
 
-const ops = () => fake.requests.map((r) => `${r.method} ${r.key || '/'}${Object.keys(r.query).length ? `?${Object.keys(r.query).sort().join('&')}` : ''}`);
+const ops = () =>
+  fake.requests.map(
+    (r) =>
+      `${r.method} ${r.key || '/'}${Object.keys(r.query).length ? `?${Object.keys(r.query).sort().join('&')}` : ''}`,
+  );
 const bytes = (size: number, seed = 1) => {
   const data = Buffer.alloc(size);
   for (let i = 0; i < size; i++) {
@@ -60,7 +64,10 @@ describe('S3Disk', () => {
         chunks.push(data.subarray(offset, offset + 777_777));
       }
 
-      const result = await disk.put('big/multi.bin', Readable.from(chunks), { metadata: { source: 'scanner' }, cacheControl: 'private' });
+      const result = await disk.put('big/multi.bin', Readable.from(chunks), {
+        metadata: { source: 'scanner' },
+        cacheControl: 'private',
+      });
 
       expect(ops()).toEqual([
         'POST big/multi.bin?uploads',
@@ -82,7 +89,11 @@ describe('S3Disk', () => {
 
       const stored = fake.object('big/multi.bin')!;
       expect(stored.data.equals(data)).toBe(true);
-      expect(stored).toMatchObject({ metadata: { source: 'scanner' }, cacheControl: 'private', contentType: 'application/octet-stream' });
+      expect(stored).toMatchObject({
+        metadata: { source: 'scanner' },
+        cacheControl: 'private',
+        contentType: 'application/octet-stream',
+      });
       expect(result).toMatchObject({ size: data.length, etag: expect.stringMatching(/-3"$/) });
       expect((await disk.stat('big/multi.bin')).size).toBe(data.length);
     });
@@ -144,13 +155,19 @@ describe('S3Disk', () => {
       const disk = s3({ multipart: { partSize: 5 * MiB }, retry: false });
       fake.fail(() => false, { status: 0, code: 'CompleteError', times: 1 });
       const error = await disk.put('big/x.bin', bytes(11 * MiB)).catch((e) => e);
-      expect(error).toMatchObject({ name: 'StorageServiceError', operation: 'CompleteMultipartUpload', code: 'InternalError' });
+      expect(error).toMatchObject({
+        name: 'StorageServiceError',
+        operation: 'CompleteMultipartUpload',
+        code: 'InternalError',
+      });
       expect(ops().at(-1)).toBe('DELETE big/x.bin?uploadId');
     });
 
     it('sizes parts from contentLength, and refuses a body that differs from it', async () => {
       const disk = s3({ multipart: { partSize: 5 * MiB } });
-      await expect(disk.put('big/len.bin', Readable.from([bytes(11 * MiB)]), { contentLength: 10 * MiB })).rejects.toMatchObject({
+      await expect(
+        disk.put('big/len.bin', Readable.from([bytes(11 * MiB)]), { contentLength: 10 * MiB }),
+      ).rejects.toMatchObject({
         name: 'StorageBodyLengthError',
       });
       expect(fake.object('big/len.bin')).toBeUndefined();
@@ -158,12 +175,19 @@ describe('S3Disk', () => {
     });
 
     it('sends server-side encryption headers on writes and copies', async () => {
-      const disk = s3({ serverSideEncryption: 'aws:kms', kmsKeyId: 'arn:aws:kms:eu-central-1:1:key/abc', multipart: { partSize: 5 * MiB } });
+      const disk = s3({
+        serverSideEncryption: 'aws:kms',
+        kmsKeyId: 'arn:aws:kms:eu-central-1:1:key/abc',
+        multipart: { partSize: 5 * MiB },
+      });
       await disk.put('enc/a.txt', 'secret');
       await disk.put('enc/big.bin', bytes(6 * MiB));
       await disk.copy('enc/a.txt', 'enc/b.txt');
 
-      expect(fake.object('enc/a.txt')).toMatchObject({ encryption: 'aws:kms', kmsKeyId: 'arn:aws:kms:eu-central-1:1:key/abc' });
+      expect(fake.object('enc/a.txt')).toMatchObject({
+        encryption: 'aws:kms',
+        kmsKeyId: 'arn:aws:kms:eu-central-1:1:key/abc',
+      });
       expect(fake.object('enc/big.bin')).toMatchObject({ encryption: 'aws:kms' });
       expect(fake.object('enc/b.txt')).toMatchObject({ encryption: 'aws:kms' });
     });
@@ -197,7 +221,12 @@ describe('S3Disk', () => {
       fake.fail(() => true, { status: 403, code: 'AccessDenied', times: 5 });
       const error = await disk.getText('x').catch((e) => e);
 
-      expect(error).toMatchObject({ code: 'AccessDenied', upstreamStatus: 403, operation: 'GetObject', requestId: 'req-1' });
+      expect(error).toMatchObject({
+        code: 'AccessDenied',
+        upstreamStatus: 403,
+        operation: 'GetObject',
+        requestId: 'req-1',
+      });
       // An outage or a misconfiguration is not the caller's fault: no 4xx `status`
       expect(error.status).toBeUndefined();
       expect(fake.requests).toHaveLength(1);
@@ -226,7 +255,9 @@ describe('S3Disk', () => {
     });
 
     it('a missing bucket is a service error, not a missing file', async () => {
-      const error = await s3({ bucket: 'nope-bucket' }).getText('x').catch((e) => e);
+      const error = await s3({ bucket: 'nope-bucket' })
+        .getText('x')
+        .catch((e) => e);
       expect(error).toBeInstanceOf(StorageServiceError);
       expect(error).not.toBeInstanceOf(StorageFileNotFoundError);
       expect(error.code).toBe('NoSuchBucket');
@@ -245,7 +276,9 @@ describe('S3Disk', () => {
       const res = await fetch(url);
       expect(res.status).toBe(200);
       expect(await res.text()).toBe('%PDF-1.7');
-      expect(res.headers.get('content-disposition')).toBe(`attachment; filename="Faktura _.pdf"; filename*=UTF-8''Faktura%20%C5%BC.pdf`);
+      expect(res.headers.get('content-disposition')).toBe(
+        `attachment; filename="Faktura _.pdf"; filename*=UTF-8''Faktura%20%C5%BC.pdf`,
+      );
     });
 
     it('GET: a tampered or expired link is refused', async () => {
@@ -267,7 +300,11 @@ describe('S3Disk', () => {
 
     it('PUT: the client must send the signed type and length', async () => {
       const disk = s3();
-      const upload = await disk.signedUpload('incoming/photo', { contentType: 'image/jpeg', contentLength: 4, expiresIn: '10m' });
+      const upload = await disk.signedUpload('incoming/photo', {
+        contentType: 'image/jpeg',
+        contentLength: 4,
+        expiresIn: '10m',
+      });
       expect(upload).toMatchObject({
         method: 'PUT',
         headers: { 'content-type': 'image/jpeg', 'content-length': '4' },
@@ -301,7 +338,9 @@ describe('S3Disk', () => {
 
     it('refuses an expiry over 7 days', async () => {
       await expect(s3().signedUrl('a', { expiresIn: '8d' })).rejects.toThrow('between 1 second and 7 days');
-      await expect(s3().signedUpload('a', { contentType: 'x/y', expiresIn: '1 week' as never })).rejects.toThrow(TypeError);
+      await expect(s3().signedUpload('a', { contentType: 'x/y', expiresIn: '1 week' as never })).rejects.toThrow(
+        TypeError,
+      );
     });
   });
 
@@ -326,7 +365,13 @@ describe('S3Disk', () => {
   describe('credentials', () => {
     const saved = { ...process.env };
     afterEach(() => {
-      for (const name of ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_REGION', 'AWS_DEFAULT_REGION']) {
+      for (const name of [
+        'AWS_ACCESS_KEY_ID',
+        'AWS_SECRET_ACCESS_KEY',
+        'AWS_SESSION_TOKEN',
+        'AWS_REGION',
+        'AWS_DEFAULT_REGION',
+      ]) {
         if (saved[name] === undefined) {
           delete process.env[name];
         } else {
@@ -336,7 +381,12 @@ describe('S3Disk', () => {
     });
 
     it('reads the standard environment variables, session token included', async () => {
-      Object.assign(process.env, { AWS_ACCESS_KEY_ID: ACCESS_KEY, AWS_SECRET_ACCESS_KEY: SECRET_KEY, AWS_SESSION_TOKEN: 'token-123', AWS_REGION: 'ap-south-1' });
+      Object.assign(process.env, {
+        AWS_ACCESS_KEY_ID: ACCESS_KEY,
+        AWS_SECRET_ACCESS_KEY: SECRET_KEY,
+        AWS_SESSION_TOKEN: 'token-123',
+        AWS_REGION: 'ap-south-1',
+      });
       fake.sessionToken = 'token-123';
       const disk = new S3Disk({ bucket: 'shop', endpoint: fake.ipEndpoint });
 
@@ -352,7 +402,9 @@ describe('S3Disk', () => {
       delete process.env.AWS_ACCESS_KEY_ID;
       delete process.env.AWS_SECRET_ACCESS_KEY;
       expect(() => new S3Disk({ bucket: 'shop' })).toThrow(/AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY/);
-      expect(() => new S3Disk({ bucket: 'shop', credentials: { accessKeyId: '', secretAccessKey: 'x' } })).toThrow('accessKeyId');
+      expect(() => new S3Disk({ bucket: 'shop', credentials: { accessKeyId: '', secretAccessKey: 'x' } })).toThrow(
+        'accessKeyId',
+      );
     });
 
     it('calls a credentials function for every request', async () => {
@@ -385,7 +437,11 @@ describe('S3Disk', () => {
       fake.fail((r) => r.key === 'keep/b.txt', { status: 0, code: 'AccessDenied', times: 1 });
 
       const error = await disk.delete(['keep/a.txt', 'keep/b.txt']).catch((e) => e);
-      expect(error).toMatchObject({ operation: 'DeleteObjects', code: 'AccessDenied', message: expect.stringContaining('1 of 2 keys') });
+      expect(error).toMatchObject({
+        operation: 'DeleteObjects',
+        code: 'AccessDenied',
+        message: expect.stringContaining('1 of 2 keys'),
+      });
     });
 
     it('deletes one by one with batchDelete: false', async () => {
@@ -438,7 +494,9 @@ describe('S3Disk', () => {
     });
 
     it('wrong credentials are refused by the fake, so a passing test means a valid signature', async () => {
-      const error = await s3({ credentials: { accessKeyId: ACCESS_KEY, secretAccessKey: 'wrong' }, retry: false }).getText('x').catch((e) => e);
+      const error = await s3({ credentials: { accessKeyId: ACCESS_KEY, secretAccessKey: 'wrong' }, retry: false })
+        .getText('x')
+        .catch((e) => e);
       expect(error).toMatchObject({ code: 'SignatureDoesNotMatch', upstreamStatus: 403 });
       expect(fake.signatureFailures[0]).toMatch(/^signature mismatch for\nGET\n\/shop\/x\n/);
       fake.signatureFailures.length = 0;
@@ -446,7 +504,9 @@ describe('S3Disk', () => {
 
     it('url() needs a publicUrl', () => {
       expect(() => s3().url('a')).toThrow(StorageError);
-      expect(s3({ publicUrl: 'https://cdn.example.com' }).url('photos/a b.jpg')).toBe('https://cdn.example.com/photos/a%20b.jpg');
+      expect(s3({ publicUrl: 'https://cdn.example.com' }).url('photos/a b.jpg')).toBe(
+        'https://cdn.example.com/photos/a%20b.jpg',
+      );
     });
   });
 });

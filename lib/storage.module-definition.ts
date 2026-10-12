@@ -156,7 +156,9 @@ function structuralProviders(disks: StorageModuleStructure['disks'] = {}): Provi
             );
           }
           if (!(disk instanceof StorageDisk)) {
-            throw new TypeError(`StorageModule: \`disks.${name}\` returned by the forRootAsync() factory must be a StorageDisk instance`);
+            throw new TypeError(
+              `StorageModule: \`disks.${name}\` returned by the forRootAsync() factory must be a StorageDisk instance`,
+            );
           }
           if (merged.has(name)) {
             throw new Error(

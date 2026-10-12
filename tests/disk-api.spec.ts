@@ -120,7 +120,9 @@ describe('bodies', () => {
       },
     });
 
-    await expect(disk.put('odd.bin', stream as never)).rejects.toThrow('A storage body stream must produce bytes or strings');
+    await expect(disk.put('odd.bin', stream as never)).rejects.toThrow(
+      'A storage body stream must produce bytes or strings',
+    );
     expect(disk.keys()).toEqual([]);
   });
 
@@ -133,7 +135,11 @@ describe('bodies', () => {
   it('an in-memory body of another length than contentLength fails, reporting both lengths', async () => {
     const error = await errorOf(() => disk.put('short.txt', 'abc', { contentLength: 5 }));
     expect(error).toBeInstanceOf(StorageBodyLengthError);
-    expect(error).toMatchObject({ expected: 5, received: 3, message: 'The body ended after 3 of the declared 5 bytes' });
+    expect(error).toMatchObject({
+      expected: 5,
+      received: 3,
+      message: 'The body ended after 3 of the declared 5 bytes',
+    });
 
     const longer = await errorOf(() => disk.put('long.txt', 'abcdef', { contentLength: 5 }));
     expect(longer).toMatchObject({ expected: 5, received: 6, message: 'The body is longer than the declared 5 bytes' });
@@ -158,7 +164,10 @@ describe('bodies', () => {
       }
     })();
 
-    await expect(disk.put('endless.bin', endless, { contentLength: 5 })).rejects.toMatchObject({ expected: 5, received: 6 });
+    await expect(disk.put('endless.bin', endless, { contentLength: 5 })).rejects.toMatchObject({
+      expected: 5,
+      received: 6,
+    });
     expect(finalized).toBe(true);
     expect(disk.keys()).toEqual([]);
   });
@@ -184,7 +193,9 @@ describe('put() options', () => {
     await disk.put('meta.txt', 'x', { metadata: { a: 'v'.repeat(2047) } });
     expect((await disk.stat('meta.txt')).metadata.a).toHaveLength(2047);
 
-    await expect(disk.put('meta.txt', 'x', { metadata: { a: 'v'.repeat(2048) } })).rejects.toThrow("metadata can't exceed 2048 bytes");
+    await expect(disk.put('meta.txt', 'x', { metadata: { a: 'v'.repeat(2048) } })).rejects.toThrow(
+      "metadata can't exceed 2048 bytes",
+    );
   });
 
   it('lowercases metadata names and accepts underscores and digits', async () => {
@@ -236,7 +247,9 @@ describe('ranges', () => {
     const disk = new InMemoryDisk();
     await disk.put('r.bin', '0123');
 
-    await expect(disk.get('r.bin', { range: { suffix: -1 } })).rejects.toThrow('`range.suffix` must be a whole number of bytes');
+    await expect(disk.get('r.bin', { range: { suffix: -1 } })).rejects.toThrow(
+      '`range.suffix` must be a whole number of bytes',
+    );
     await expect(disk.get('r.bin', { range: { suffix: 1.5 } })).rejects.toThrow(TypeError);
     await expect(disk.get('r.bin', { range: { start: 0, end: -1 } })).rejects.toThrow(TypeError);
   });
@@ -318,12 +331,17 @@ describe('public URLs', () => {
     expect(disk.url('a.txt')).toBe('http://localhost:3000/a.txt');
   });
 
-  it.each(['ftp://cdn.example.com', 'https://cdn.example.com/?v=1', 'https://cdn.example.com/#top', 'cdn.example.com', 'not a url'])(
-    'refuses %s at startup, naming the disk class',
-    (publicUrl) => {
-      expect(() => new InMemoryDisk({ publicUrl })).toThrow('InMemoryDisk `publicUrl` must be an absolute http(s) URL without a query');
-    },
-  );
+  it.each([
+    'ftp://cdn.example.com',
+    'https://cdn.example.com/?v=1',
+    'https://cdn.example.com/#top',
+    'cdn.example.com',
+    'not a url',
+  ])('refuses %s at startup, naming the disk class', (publicUrl) => {
+    expect(() => new InMemoryDisk({ publicUrl })).toThrow(
+      'InMemoryDisk `publicUrl` must be an absolute http(s) URL without a query',
+    );
+  });
 });
 
 describe('signed URL expiry and options', () => {
@@ -357,26 +375,37 @@ describe('signed URL expiry and options', () => {
   });
 
   it('explains a malformed duration', async () => {
-    await expect(disk.signedUrl('a.txt', { expiresIn: 'soon' as never })).rejects.toThrow('`expiresIn`: Invalid duration "soon"');
+    await expect(disk.signedUrl('a.txt', { expiresIn: 'soon' as never })).rejects.toThrow(
+      '`expiresIn`: Invalid duration "soon"',
+    );
     await expect(disk.signedUrl('a.txt', { expiresIn: -5 })).rejects.toThrow('`expiresIn`: Invalid duration -5');
   });
 
   it('signs the disposition: inline, inline with a name, or an attachment with a name', async () => {
-    const claims = async (options: object) => disk.verifySignedUrl(await disk.signedUrl('docs/a.pdf', options)).contentDisposition;
+    const claims = async (options: object) =>
+      disk.verifySignedUrl(await disk.signedUrl('docs/a.pdf', options)).contentDisposition;
 
     expect(await claims({})).toBeUndefined();
     expect(await claims({ disposition: 'inline' })).toBe('inline');
     expect(await claims({ disposition: 'inline', filename: 'a.pdf' })).toBe('inline; filename="a.pdf"');
     expect(await claims({ filename: 'dir/a.pdf/' })).toBe('attachment; filename="download"');
-    await expect(disk.signedUrl('docs/a.pdf', { filename: '' })).rejects.toThrow('`filename` must be a non-empty string');
+    await expect(disk.signedUrl('docs/a.pdf', { filename: '' })).rejects.toThrow(
+      '`filename` must be a non-empty string',
+    );
   });
 
   it('checks signedUpload() options before signing', async () => {
     await expect(disk.signedUpload('u.bin', {} as never)).rejects.toThrow('`contentType` must be a non-empty string');
     await expect(disk.signedUpload('u.bin', { contentType: 'image/png\r\nX: y' })).rejects.toThrow(TypeError);
-    await expect(disk.signedUpload('u.bin', { contentType: 'image/png', contentLength: -1 })).rejects.toThrow('`contentLength` must be a whole number');
-    await expect(disk.signedUpload('u.bin', { contentType: 'image/png', contentLength: 2.5 })).rejects.toThrow(TypeError);
-    await expect(disk.signedUpload('../u.bin', { contentType: 'image/png' })).rejects.toBeInstanceOf(StorageInvalidKeyError);
+    await expect(disk.signedUpload('u.bin', { contentType: 'image/png', contentLength: -1 })).rejects.toThrow(
+      '`contentLength` must be a whole number',
+    );
+    await expect(disk.signedUpload('u.bin', { contentType: 'image/png', contentLength: 2.5 })).rejects.toThrow(
+      TypeError,
+    );
+    await expect(disk.signedUpload('../u.bin', { contentType: 'image/png' })).rejects.toBeInstanceOf(
+      StorageInvalidKeyError,
+    );
 
     const upload = await disk.signedUpload('u.bin', { contentType: 'image/png', contentLength: 0, expiresIn: '1m' });
     expect(upload.expiresAt).toEqual(new Date(now + 60_000));
@@ -385,7 +414,9 @@ describe('signed URL expiry and options', () => {
 
   it('signedUpload() and verifySignedUrl() without signedUrls explain what to configure', async () => {
     const bare = new InMemoryDisk();
-    await expect(bare.signedUpload('a', { contentType: 'x/y' })).rejects.toThrow("has no `signedUrls` option, so signedUpload() can't be used");
+    await expect(bare.signedUpload('a', { contentType: 'x/y' })).rejects.toThrow(
+      "has no `signedUrls` option, so signedUpload() can't be used",
+    );
     expect(() => bare.verifySignedUrl('https://x/files?key=a')).toThrow("so verifySignedUrl() can't be used");
   });
 });
@@ -399,7 +430,11 @@ class MapDisk extends StorageDisk {
     super(options);
   }
 
-  protected async writeObject(key: string, body: AsyncIterable<Buffer>, file: StorageObjectWrite): Promise<StorageWriteResult> {
+  protected async writeObject(
+    key: string,
+    body: AsyncIterable<Buffer>,
+    file: StorageObjectWrite,
+  ): Promise<StorageWriteResult> {
     this.calls.push(`write ${key}`);
     const chunks: Buffer[] = [];
     for await (const chunk of body) {
@@ -419,7 +454,13 @@ class MapDisk extends StorageDisk {
     if (!entry) {
       throw new StorageFileNotFoundError(key);
     }
-    return { key, size: entry.data.length, contentType: entry.file.contentType, lastModified: new Date(0), metadata: entry.file.metadata };
+    return {
+      key,
+      size: entry.data.length,
+      contentType: entry.file.contentType,
+      lastModified: new Date(0),
+      metadata: entry.file.metadata,
+    };
   }
 
   protected async deleteObjects(keys: string[]): Promise<void> {
@@ -459,7 +500,11 @@ describe('a custom disk extending StorageDisk', () => {
     expect(disk.files.get('docs/a.pdf')!.file.contentLength).toBeUndefined();
 
     await disk.put('b.bin', 'four', { contentType: 'application/x-example' });
-    expect(disk.files.get('b.bin')!.file).toMatchObject({ contentType: 'application/x-example', explicitContentType: true, contentLength: 4 });
+    expect(disk.files.get('b.bin')!.file).toMatchObject({
+      contentType: 'application/x-example',
+      explicitContentType: true,
+      contentLength: 4,
+    });
   });
 
   it('moves by copying then deleting the source, unless it overrides moveObject()', async () => {
@@ -485,14 +530,18 @@ describe('a custom disk extending StorageDisk', () => {
     const disk = new MapDisk();
     expect(await disk.exists('missing')).toBe(false);
 
-    vi.spyOn(disk as unknown as { headObject: () => Promise<never> }, 'headObject').mockRejectedValue(new Error('backend down'));
+    vi.spyOn(disk as unknown as { headObject: () => Promise<never> }, 'headObject').mockRejectedValue(
+      new Error('backend down'),
+    );
     await expect(disk.exists('any')).rejects.toThrow('backend down');
   });
 
   it('names its own class when something is not configured', async () => {
     const disk = new MapDisk();
     expect(() => disk.url('a')).toThrow("MapDisk has no `publicUrl`, so url() can't build a public URL");
-    await expect(disk.signedUrl('a')).rejects.toThrow("MapDisk has no `signedUrls` option, so signedUrl() can't be used");
+    await expect(disk.signedUrl('a')).rejects.toThrow(
+      "MapDisk has no `signedUrls` option, so signedUrl() can't be used",
+    );
     expect(() => new MapDisk({ publicUrl: 'nope' })).toThrow('MapDisk `publicUrl`');
   });
 });
@@ -501,7 +550,13 @@ describe('Storage', () => {
   it('resolves disks by name, the default one without a name', () => {
     const a = new InMemoryDisk();
     const b = new InMemoryDisk();
-    const storage = new Storage(new Map([['a', a], ['b', b]]), 'b');
+    const storage = new Storage(
+      new Map([
+        ['a', a],
+        ['b', b],
+      ]),
+      'b',
+    );
 
     expect(storage.disk()).toBe(b);
     expect(storage.disk('a')).toBe(a);
@@ -533,9 +588,23 @@ describe('errors', () => {
 
   it('StorageServiceError describes the operation, code and upstream status, and keeps the cause', () => {
     const cause = new Error('socket hang up');
-    const full = new StorageServiceError({ operation: 'GetObject', code: 'SlowDown', upstreamStatus: 503, message: 'Reduce your rate', requestId: 'r1', cause });
+    const full = new StorageServiceError({
+      operation: 'GetObject',
+      code: 'SlowDown',
+      upstreamStatus: 503,
+      message: 'Reduce your rate',
+      requestId: 'r1',
+      cause,
+    });
     expect(full.message).toBe('GetObject failed: SlowDown (503): Reduce your rate');
-    expect(full).toMatchObject({ name: 'StorageServiceError', operation: 'GetObject', code: 'SlowDown', upstreamStatus: 503, requestId: 'r1', cause });
+    expect(full).toMatchObject({
+      name: 'StorageServiceError',
+      operation: 'GetObject',
+      code: 'SlowDown',
+      upstreamStatus: 503,
+      requestId: 'r1',
+      cause,
+    });
     expect('status' in full).toBe(false);
 
     const bare = new StorageServiceError({ operation: 'PutObject', code: 'NetworkError' });

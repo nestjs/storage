@@ -55,7 +55,9 @@ function parseRequest(text: string) {
 const read = (name: string, ext: string) => readFileSync(join(SUITE, name, `${name}.${ext}`), 'utf8');
 
 describe('AWS Signature Version 4 test suite', () => {
-  const cases = readdirSync(SUITE, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+  const cases = readdirSync(SUITE, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
 
   it('has the vectors', () => {
     expect(cases.length).toBe(24);
@@ -69,7 +71,10 @@ describe('AWS Signature Version 4 test suite', () => {
     }
 
     // The suite's paths are raw; each segment is encoded once, as S3 paths are.
-    const path = request.path.split('/').map((segment) => encodeRfc3986(decodeURIComponent(segment))).join('/');
+    const path = request.path
+      .split('/')
+      .map((segment) => encodeRfc3986(decodeURIComponent(segment)))
+      .join('/');
     const { request: canonical, signedHeaders } = canonicalRequest({
       method: request.method,
       path,
@@ -90,12 +95,23 @@ describe('AWS Signature Version 4 test suite', () => {
 });
 
 describe('Amazon S3 API reference examples', () => {
-  const credentials = { accessKeyId: 'AKIAIOSFODNN7EXAMPLE', secretAccessKey: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY' };
+  const credentials = {
+    accessKeyId: 'AKIAIOSFODNN7EXAMPLE',
+    secretAccessKey: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+  };
   const date = new Date(Date.UTC(2013, 4, 24));
   const EMPTY = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 
   function sign(url: string, method: string, headers: Record<string, string>, payloadHash: string) {
-    return signRequest({ method, url: new URL(url), headers: { ...headers, 'x-amz-content-sha256': payloadHash }, payloadHash, credentials, region: 'us-east-1', date });
+    return signRequest({
+      method,
+      url: new URL(url),
+      headers: { ...headers, 'x-amz-content-sha256': payloadHash },
+      payloadHash,
+      credentials,
+      region: 'us-east-1',
+      date,
+    });
   }
   const sigOf = (authorization: string) => /Signature=([0-9a-f]+)$/.exec(authorization)![1];
 
@@ -104,7 +120,12 @@ describe('Amazon S3 API reference examples', () => {
       method: 'GET',
       path: '/test.txt',
       query: [],
-      headers: [['host', 'examplebucket.s3.amazonaws.com'], ['range', 'bytes=0-9'], ['x-amz-content-sha256', EMPTY], ['x-amz-date', '20130524T000000Z']],
+      headers: [
+        ['host', 'examplebucket.s3.amazonaws.com'],
+        ['range', 'bytes=0-9'],
+        ['x-amz-content-sha256', EMPTY],
+        ['x-amz-date', '20130524T000000Z'],
+      ],
       payloadHash: EMPTY,
     });
 
@@ -126,7 +147,12 @@ describe('Amazon S3 API reference examples', () => {
     expect(payload).toBe('44ce7dd67c959e0d3524ffac1771dfbba87d2b6b4b4e99e42034a8b803f8b072');
     // "$" is encoded in the path: the key goes through the same encoder S3Disk uses
     const url = `https://examplebucket.s3.amazonaws.com/${encodeRfc3986('test$file.text')}`;
-    const headers = sign(url, 'PUT', { date: 'Fri, 24 May 2013 00:00:00 GMT', 'x-amz-storage-class': 'REDUCED_REDUNDANCY' }, payload);
+    const headers = sign(
+      url,
+      'PUT',
+      { date: 'Fri, 24 May 2013 00:00:00 GMT', 'x-amz-storage-class': 'REDUCED_REDUNDANCY' },
+      payload,
+    );
     expect(sigOf(headers.authorization)).toBe('98ad721746da40c64f1a55b78f14c238d841ea1380cd77a1b5971af0ece108bd');
   });
 
@@ -150,7 +176,9 @@ describe('Amazon S3 API reference examples', () => {
       date,
     });
 
-    expect(url.searchParams.get('X-Amz-Signature')).toBe('aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404');
+    expect(url.searchParams.get('X-Amz-Signature')).toBe(
+      'aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404',
+    );
     expect(url.toString()).toBe(
       'https://examplebucket.s3.amazonaws.com/test.txt?X-Amz-Algorithm=AWS4-HMAC-SHA256' +
         '&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20130524%2Fus-east-1%2Fs3%2Faws4_request' +

@@ -6,7 +6,13 @@
  */
 import { EventEmitter } from 'node:events';
 import { PassThrough, Readable } from 'node:stream';
-import { BadRequestException, ForbiddenException, HttpException, NotFoundException, type StreamableFile } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  HttpException,
+  NotFoundException,
+  type StreamableFile,
+} from '@nestjs/common';
 import { InMemoryDisk, receiveSignedUpload, S3Disk, serveFile, serveSignedUrl } from '../lib/index.js';
 
 const signedUrls = { baseUrl: 'https://api.example.com/files', keys: ['s'.repeat(32)] };
@@ -50,7 +56,11 @@ const read = async (file: StreamableFile | undefined) => {
   return Buffer.concat(chunks);
 };
 
-const errorOf = (promise: Promise<unknown>) => promise.then(() => undefined, (error: unknown) => error);
+const errorOf = (promise: Promise<unknown>) =>
+  promise.then(
+    () => undefined,
+    (error: unknown) => error,
+  );
 const local = (url: string) => `${new URL(url).pathname}${new URL(url).search}`;
 
 describe.each([
@@ -99,7 +109,10 @@ describe.each([
     const res = response();
     const get = vi.spyOn(disk, 'get');
 
-    const file = await serveFile(disk, 'docs/report.pdf', { req: { headers: { 'if-none-match': header(etag!) } }, res });
+    const file = await serveFile(disk, 'docs/report.pdf', {
+      req: { headers: { 'if-none-match': header(etag!) } },
+      res,
+    });
 
     expect(file).toBeUndefined();
     expect(res.statusCode).toBe(304);
@@ -125,12 +138,15 @@ describe.each([
     expect((await read(file)).toString()).toBe('0123');
   });
 
-  it.each(['bytes=12-9', 'bytes=-', 'bytes=99999999999999999999-', ' bytes = 1-2'])('ignores the range %j', async (range) => {
-    const res = response();
-    const file = await serveFile(disk, 'docs/report.pdf', { req: { headers: { range } }, res });
-    expect(res.statusCode).toBe(200);
-    expect(file!.getHeaders().length).toBe(19);
-  });
+  it.each(['bytes=12-9', 'bytes=-', 'bytes=99999999999999999999-', ' bytes = 1-2'])(
+    'ignores the range %j',
+    async (range) => {
+      const res = response();
+      const file = await serveFile(disk, 'docs/report.pdf', { req: { headers: { range } }, res });
+      expect(res.statusCode).toBe(200);
+      expect(file!.getHeaders().length).toBe(19);
+    },
+  );
 
   it('answers a zero-byte suffix with 416 and the size', async () => {
     const res = response();
@@ -207,13 +223,21 @@ describe('serveSignedUrl()', () => {
   it('is a 404 on a disk that does not serve its own signed URLs', async () => {
     const s3 = new S3Disk({ bucket: 'shop', credentials: { accessKeyId: 'a', secretAccessKey: 'b' } });
     for (const target of [new InMemoryDisk(), s3]) {
-      await expect(serveSignedUrl(target, { req: { url: '/files?key=a' }, res: new ExpressResponse() })).rejects.toBeInstanceOf(NotFoundException);
+      await expect(
+        serveSignedUrl(target, { req: { url: '/files?key=a' }, res: new ExpressResponse() }),
+      ).rejects.toBeInstanceOf(NotFoundException);
     }
   });
 
   it('turns a signed inline disposition into an attachment for a type that could run script', async () => {
-    const html = await serveSignedUrl(disk, { req: { url: local(await disk.signedUrl('site/page.html', { disposition: 'inline' })) }, res: new ExpressResponse() });
-    const png = await serveSignedUrl(disk, { req: { url: local(await disk.signedUrl('img/a.png', { disposition: 'inline', filename: 'a.png' })) }, res: new ExpressResponse() });
+    const html = await serveSignedUrl(disk, {
+      req: { url: local(await disk.signedUrl('site/page.html', { disposition: 'inline' })) },
+      res: new ExpressResponse(),
+    });
+    const png = await serveSignedUrl(disk, {
+      req: { url: local(await disk.signedUrl('img/a.png', { disposition: 'inline', filename: 'a.png' })) },
+      res: new ExpressResponse(),
+    });
 
     expect(html!.getHeaders().disposition).toBe('attachment');
     expect(png!.getHeaders().disposition).toBe('inline; filename="a.png"');
@@ -230,7 +254,9 @@ describe('serveSignedUrl()', () => {
 
   it('refuses an upload URL and an expired one with 403, saying which', async () => {
     const upload = await disk.signedUpload('img/a.png', { contentType: 'image/png' });
-    const refused = await errorOf(serveSignedUrl(disk, { req: { url: local(upload.url) }, res: new ExpressResponse() }));
+    const refused = await errorOf(
+      serveSignedUrl(disk, { req: { url: local(upload.url) }, res: new ExpressResponse() }),
+    );
     expect(refused).toBeInstanceOf(ForbiddenException);
     expect((refused as ForbiddenException).message).toBe('Invalid signed URL');
 
@@ -244,7 +270,9 @@ describe('serveSignedUrl()', () => {
   it('is a 404 when the signed file is gone', async () => {
     const url = local(await disk.signedUrl('img/a.png'));
     await disk.delete('img/a.png');
-    await expect(serveSignedUrl(disk, { req: { url }, res: new ExpressResponse() })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(serveSignedUrl(disk, { req: { url }, res: new ExpressResponse() })).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 });
 
@@ -275,7 +303,11 @@ describe('receiveSignedUpload()', () => {
 
   it('refuses a download URL with 403', async () => {
     const url = local(await disk.signedUrl('a.bin'));
-    expect(await statusOf(receiveSignedUpload(disk, { req: expressRequest(url, { 'content-length': '1' }, Buffer.from('x')) }))).toBe(403);
+    expect(
+      await statusOf(
+        receiveSignedUpload(disk, { req: expressRequest(url, { 'content-length': '1' }, Buffer.from('x')) }),
+      ),
+    ).toBe(403);
   });
 
   it.each([
@@ -284,13 +316,21 @@ describe('receiveSignedUpload()', () => {
     ['a negative Content-Length', { 'content-length': '-1' }],
   ])('answers %s with 411', async (_label, headers) => {
     const upload = await disk.signedUpload('a.bin', { contentType: 'application/pdf' });
-    const req = expressRequest(local(upload.url), { 'content-type': 'application/pdf', ...headers }, Buffer.from('%PDF'));
+    const req = expressRequest(
+      local(upload.url),
+      { 'content-type': 'application/pdf', ...headers },
+      Buffer.from('%PDF'),
+    );
     expect(await statusOf(receiveSignedUpload(disk, { req }))).toBe(411);
   });
 
   it('a body shorter than its Content-Length is a 400, and nothing is stored', async () => {
     const upload = await disk.signedUpload('a.bin', { contentType: 'application/pdf' });
-    const req = expressRequest(local(upload.url), { 'content-type': 'application/pdf', 'content-length': '10' }, Buffer.from('%PDF'));
+    const req = expressRequest(
+      local(upload.url),
+      { 'content-type': 'application/pdf', 'content-length': '10' },
+      Buffer.from('%PDF'),
+    );
 
     const error = await errorOf(receiveSignedUpload(disk, { req }));
 
@@ -301,19 +341,40 @@ describe('receiveSignedUpload()', () => {
 
   it('does not apply maxSize when the URL was signed with a length', async () => {
     const upload = await disk.signedUpload('big.bin', { contentType: 'application/pdf', contentLength: 2000 });
-    const req = expressRequest(local(upload.url), { 'content-type': 'application/pdf', 'content-length': '2000' }, Buffer.alloc(2000, 1));
+    const req = expressRequest(
+      local(upload.url),
+      { 'content-type': 'application/pdf', 'content-length': '2000' },
+      Buffer.alloc(2000, 1),
+    );
 
-    await expect(receiveSignedUpload(disk, { req, maxSize: 1000 })).resolves.toMatchObject({ key: 'big.bin', size: 2000 });
+    await expect(receiveSignedUpload(disk, { req, maxSize: 1000 })).resolves.toMatchObject({
+      key: 'big.bin',
+      size: 2000,
+    });
   });
 
   it.each([
-    ['an Express body a parser already read', (url: string, headers: Record<string, string>) => Object.assign(expressRequest(url, headers), { _body: true })],
-    ['a Fastify body a parser already read', (url: string, headers: Record<string, string>) => ({ url, headers, raw: new PassThrough(), body: { parsed: true } })],
-    ['a stream that already ended', (url: string, headers: Record<string, string>) => {
-      const req = expressRequest(url, headers, Buffer.alloc(0));
-      req.resume();
-      return new Promise((resolve) => req.once('end', () => resolve(req)));
-    }],
+    [
+      'an Express body a parser already read',
+      (url: string, headers: Record<string, string>) => Object.assign(expressRequest(url, headers), { _body: true }),
+    ],
+    [
+      'a Fastify body a parser already read',
+      (url: string, headers: Record<string, string>) => ({
+        url,
+        headers,
+        raw: new PassThrough(),
+        body: { parsed: true },
+      }),
+    ],
+    [
+      'a stream that already ended',
+      (url: string, headers: Record<string, string>) => {
+        const req = expressRequest(url, headers, Buffer.alloc(0));
+        req.resume();
+        return new Promise((resolve) => req.once('end', () => resolve(req)));
+      },
+    ],
   ])('refuses %s with 400', async (_label, build) => {
     const upload = await disk.signedUpload('a.bin', { contentType: 'application/json' });
     const req = await build(local(upload.url), { 'content-type': 'application/json', 'content-length': '2' });
@@ -321,12 +382,19 @@ describe('receiveSignedUpload()', () => {
     const error = await errorOf(receiveSignedUpload(disk, { req }));
 
     expect(error).toBeInstanceOf(BadRequestException);
-    expect((error as BadRequestException).message).toBe('The upload body was already parsed; signed uploads need the raw request body');
+    expect((error as BadRequestException).message).toBe(
+      'The upload body was already parsed; signed uploads need the raw request body',
+    );
   });
 
   it('reads a Fastify request body from raw, and sends the ETag on the reply', async () => {
     const upload = await disk.signedUpload('in/a.pdf', { contentType: 'application/pdf', contentLength: 4 });
-    const req = { url: local(upload.url), headers: { 'content-type': 'application/pdf', 'content-length': '4' }, raw: Readable.from([Buffer.from('%PDF')]), body: undefined };
+    const req = {
+      url: local(upload.url),
+      headers: { 'content-type': 'application/pdf', 'content-length': '4' },
+      raw: Readable.from([Buffer.from('%PDF')]),
+      body: undefined,
+    };
     const res = new FastifyReply();
 
     const result = await receiveSignedUpload(disk, { req, res });
@@ -340,7 +408,11 @@ describe('receiveSignedUpload()', () => {
     const failure = new Error('disk full');
     vi.spyOn(disk, 'put').mockRejectedValue(failure);
     const upload = await disk.signedUpload('a.bin', { contentType: 'application/pdf' });
-    const req = expressRequest(local(upload.url), { 'content-type': 'application/pdf', 'content-length': '4' }, Buffer.from('%PDF'));
+    const req = expressRequest(
+      local(upload.url),
+      { 'content-type': 'application/pdf', 'content-length': '4' },
+      Buffer.from('%PDF'),
+    );
 
     await expect(receiveSignedUpload(disk, { req })).rejects.toBe(failure);
   });

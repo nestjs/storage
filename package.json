@@ -22,6 +22,7 @@
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "format": "prettier --write \"**/*.ts\"",
+    "format:check": "prettier --check \"**/*.ts\"",
     "lint": "oxlint lib/",
     "prepublish:npm": "npm run build",
     "publish:npm": "npm publish --access public",
@@ -62,7 +63,7 @@
     "reflect-metadata": "^0.1.13 || ^0.2.0"
   },
   "lint-staged": {
-    "**/*.{ts,json}": []
+    "*.ts": "prettier --write"
   },
   "repository": {
     "type": "git",

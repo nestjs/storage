@@ -16,6 +16,7 @@ jobs:
       - run: npm install
       - run: npm run build
       - run: npm run lint
+      - run: npm run format:check
 
   e2e:
     runs-on: ubuntu-latest

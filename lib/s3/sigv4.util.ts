@@ -16,7 +16,10 @@ function hmac(key: string | Buffer, data: string): Buffer {
 
 /** `20150830T123600Z` */
 export function amzDate(date: Date): string {
-  return date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  return date
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\.\d{3}/, '');
 }
 
 /**
@@ -82,7 +85,13 @@ export function stringToSign(request: string, date: Date, scope: string): string
   return [ALGORITHM, amzDate(date), scope, sha256Hex(request)].join('\n');
 }
 
-export function signature(secretAccessKey: string, date: Date, region: string, service: string, toSign: string): string {
+export function signature(
+  secretAccessKey: string,
+  date: Date,
+  region: string,
+  service: string,
+  toSign: string,
+): string {
   const dateKey = hmac(`AWS4${secretAccessKey}`, amzDate(date).slice(0, 8));
   const regionKey = hmac(dateKey, region);
   const serviceKey = hmac(regionKey, service);
@@ -123,7 +132,13 @@ export function signRequest(input: SignRequestInput): Record<string, string> {
     payloadHash: input.payloadHash,
   });
   const scope = credentialScope(date, input.region, service);
-  const sig = signature(input.credentials.secretAccessKey, date, input.region, service, stringToSign(request, date, scope));
+  const sig = signature(
+    input.credentials.secretAccessKey,
+    date,
+    input.region,
+    service,
+    stringToSign(request, date, scope),
+  );
 
   headers.authorization =
     `${ALGORITHM} Credential=${input.credentials.accessKeyId}/${scope}, ` +
@@ -153,7 +168,10 @@ export function presignUrl(input: PresignInput): URL {
   const url = new URL(input.url);
   const headers: Record<string, string> = { ...input.headers, host: url.host };
   const scope = credentialScope(date, input.region, service);
-  const signedHeaders = Object.keys(headers).map((name) => name.toLowerCase()).sort().join(';');
+  const signedHeaders = Object.keys(headers)
+    .map((name) => name.toLowerCase())
+    .sort()
+    .join(';');
 
   url.searchParams.set('X-Amz-Algorithm', ALGORITHM);
   url.searchParams.set('X-Amz-Credential', `${input.credentials.accessKeyId}/${scope}`);
@@ -171,7 +189,13 @@ export function presignUrl(input: PresignInput): URL {
     headers: Object.entries(headers),
     payloadHash: UNSIGNED_PAYLOAD,
   });
-  const sig = signature(input.credentials.secretAccessKey, date, input.region, service, stringToSign(request, date, scope));
+  const sig = signature(
+    input.credentials.secretAccessKey,
+    date,
+    input.region,
+    service,
+    stringToSign(request, date, scope),
+  );
   url.searchParams.set('X-Amz-Signature', sig);
 
   // URLSearchParams writes spaces as "+", which S3 would read as a literal plus: re-encode the
