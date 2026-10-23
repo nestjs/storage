@@ -3,7 +3,16 @@
  * directory other tools also write to, how sidecars follow copies and moves, and how the root
  * itself is resolved.
  */
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import {
@@ -101,6 +110,47 @@ describe('LocalDisk', () => {
 
       expect(temps()).toEqual([]);
       expect(sidecars()).toEqual([]);
+    });
+  });
+
+  describe('directories a delete or a move empties', () => {
+    const onDisk = (...segments: string[]) => existsSync(join(root, ...segments));
+
+    it('are removed up to the root; a directory that still holds something stays', async () => {
+      await disk.put('a/b/c.txt', 'c');
+      await disk.put('a/d.txt', 'd');
+      await disk.put('x/y/z.txt', 'z');
+
+      await disk.delete(['a/b/c.txt', 'x/y/z.txt']);
+      expect(onDisk('a', 'b')).toBe(false);
+      expect(onDisk('a', 'd.txt')).toBe(true);
+      expect(onDisk('x')).toBe(false);
+
+      await disk.move('a/d.txt', 'd.txt');
+      expect(onDisk('a')).toBe(false);
+      expect(readdirSync(root).sort()).toEqual(['.nest-storage', 'd.txt']);
+    });
+
+    it('a directory another tool left empty at the key is replaced; one with anything in it is a conflict', async () => {
+      mkdirSync(join(root, 'stale'));
+      await disk.put('stale', 'file');
+      expect(await disk.getText('stale')).toBe('file');
+
+      mkdirSync(join(root, 'nested', 'empty'), { recursive: true });
+      await expect(disk.put('nested', 'x')).rejects.toBeInstanceOf(StorageKeyConflictError);
+      expect(onDisk('nested', 'empty')).toBe(true);
+      expect(temps()).toEqual([]);
+    });
+
+    it('a symbolic link on the way is not removed, nor the directory it leads to', async () => {
+      mkdirSync(join(root, 'real'));
+      symlinkSync(join(root, 'real'), join(root, 'alias'));
+
+      await disk.put('real/sub/a.txt', 'a');
+      await disk.delete('alias/sub/a.txt');
+      expect(onDisk('real', 'sub')).toBe(false);
+      expect(onDisk('alias')).toBe(true);
+      expect(onDisk('real')).toBe(true);
     });
   });
 

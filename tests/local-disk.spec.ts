@@ -12,9 +12,16 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { open } from 'node:fs/promises';
+import { open, rename } from 'node:fs/promises';
 import { LocalDisk, StorageFileNotFoundError, StorageInvalidKeyError, StorageKeyConflictError } from '../lib/index.js';
 import { StorageError } from '../lib/errors/storage.error.js';
+
+// Passes through, so a test can run something between a write's ensureParent() and its rename
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, rename: vi.fn(actual.rename) };
+});
+const realRename = (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).rename;
 
 const made: string[] = [];
 const tempDir = (label: string) => {
@@ -341,6 +348,33 @@ describe('LocalDisk', () => {
         text += chunk;
       }
       expect(text).toBe('version-1');
+    });
+  });
+
+  describe('writes racing a delete that empties their directory', () => {
+    it('creates the directory again and completes', async () => {
+      await disk.put('avatars/a.png', 'a');
+      vi.mocked(rename).mockImplementationOnce(async (from, to) => {
+        await disk.delete('avatars/a.png'); // after ensureParent(): the delete prunes avatars/
+        expect(existsSync(join(root, 'avatars'))).toBe(false);
+        return realRename(from, to);
+      });
+
+      await disk.put('avatars/b.png', 'b');
+      expect(await disk.getText('avatars/b.png')).toBe('b');
+    });
+
+    it('is a conflict when a file was put at the directory name in between', async () => {
+      await disk.put('avatars/a.png', 'a');
+      vi.mocked(rename).mockImplementationOnce(async (from, to) => {
+        await disk.delete('avatars/a.png');
+        await disk.put('avatars', 'file');
+        return realRename(from, to);
+      });
+
+      await expect(disk.put('avatars/b.png', 'b')).rejects.toBeInstanceOf(StorageKeyConflictError);
+      expect(await disk.getText('avatars')).toBe('file');
+      expect(readdirSync(join(root, '.nest-storage', 'tmp'))).toEqual([]);
     });
   });
 
