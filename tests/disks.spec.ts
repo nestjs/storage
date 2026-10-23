@@ -329,6 +329,24 @@ describe.each(disks)('%s', (name, create) => {
       expect((await disk.list({ prefix: 'd/' })).entries).toEqual([]);
     });
 
+    it('a deleted or moved key leaves nothing that keeps its folder name from being a key', async () => {
+      await disk.put('avatars/a.png', 'png');
+      await disk.delete('avatars/a.png');
+      expect(await disk.exists('avatars')).toBe(false);
+      await disk.put('avatars', 'text');
+      expect(await disk.getText('avatars')).toBe('text');
+
+      await disk.put('in/deep/u1', 'photo');
+      await disk.move('in/deep/u1', 'out.bin');
+      await disk.copy('out.bin', 'in');
+      await disk.put('up/a', 'a');
+      await disk.delete('up/a');
+      await disk.move('out.bin', 'up');
+      expect(await disk.getText('in')).toBe('photo');
+      expect(await disk.getText('up')).toBe('photo');
+      expect((await disk.list()).entries.map((entry) => entry.key)).toEqual(['avatars', 'in', 'up']);
+    });
+
     it('copies content and metadata', async () => {
       await disk.put('src/a.bin', 'payload', { contentType: 'application/x-example', metadata: { owner: 'u1' } });
       const result = await disk.copy('src/a.bin', 'dst/nested/a.bin');

@@ -11,6 +11,7 @@ import {
   realpath,
   rename,
   rm,
+  rmdir,
   unlink,
   writeFile,
   type FileHandle,
@@ -168,6 +169,7 @@ export class LocalDisk extends StorageDisk {
     // A rename keeps size and mtime, so the sidecar still matches the file.
     await this.commit(to, source.path, target, source.stats, meta);
     await rm(this.sidecarPath(from), { force: true });
+    await this.prune([dirname(source.path)]);
 
     const contentType = meta?.contentType ?? contentTypeFromKey(to);
     return { key: to, size: source.stats.size, contentType, etag: etagOf(source.stats) };
@@ -193,10 +195,30 @@ export class LocalDisk extends StorageDisk {
       await rm(metaPath, { force: true });
     }
 
-    try {
-      await rename(file, target);
-    } catch (error) {
-      throw conflictOr(error, key);
+    await this.place(key, file, target);
+  }
+
+  /**
+   * Renames `file` over the key. An empty directory at the key (from a delete before pruning
+   * existed, or from another tool) is removed first: it holds no key, so it can't conflict. A
+   * directory that a concurrent delete pruned after `ensureParent()` is created again.
+   */
+  private async place(key: string, file: string, target: string): Promise<void> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await rename(file, target);
+        return;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (attempt === 3) {
+          throw conflictOr(error, key);
+        }
+        if (code === 'ENOENT') {
+          await this.ensureParent(key, target);
+        } else if (!(isDirectoryInTheWay(code) && (await removeIfEmpty(target)))) {
+          throw conflictOr(error, key);
+        }
+      }
     }
   }
 
@@ -240,6 +262,7 @@ export class LocalDisk extends StorageDisk {
   }
 
   protected async deleteObjects(keys: string[]): Promise<void> {
+    const emptied = new Set<string>();
     for (const key of keys) {
       const path = this.pathOf(this.checkKey(key));
       if (!(await this.parentInside(path))) {
@@ -251,6 +274,7 @@ export class LocalDisk extends StorageDisk {
         // Only files: a directory (a prefix of other keys) or a link isn't a stored file.
         if (stats.isFile()) {
           await unlink(path);
+          emptied.add(dirname(path));
         }
       } catch (error) {
         if (!isMissing(error)) {
@@ -259,6 +283,25 @@ export class LocalDisk extends StorageDisk {
       }
 
       await rm(this.sidecarPath(key), { force: true });
+    }
+
+    await this.prune(emptied);
+  }
+
+  /**
+   * Removes the directories a delete or a move left empty, up to (not including) the root, so
+   * a deleted `a/b` doesn't keep `a` from being a key. Best effort: it stops at the first
+   * directory that still holds something, or that it can't remove (EPERM or EBUSY, untested).
+   * Deepest first, so a parent is tried after all its emptied children.
+   */
+  private async prune(dirs: Iterable<string>): Promise<void> {
+    const deepestFirst = [...dirs].sort((a, b) => b.length - a.length);
+    for (const start of deepestFirst) {
+      for (let dir = start; dir.startsWith(this.realRoot + sep); dir = dirname(dir)) {
+        if (!(await removeIfEmpty(dir))) {
+          break;
+        }
+      }
     }
   }
 
@@ -506,6 +549,19 @@ function conflictOr(error: unknown, key: string): unknown {
     return new StorageKeyConflictError(key);
   }
   return error;
+}
+
+/** What `rename()` reports when a directory is at the target. EPERM is meant for Windows, which is untested. */
+function isDirectoryInTheWay(code: string | undefined): boolean {
+  return code === 'EISDIR' || code === 'EEXIST' || code === 'ENOTEMPTY' || code === 'EPERM';
+}
+
+/** `rmdir` only removes an empty directory, and never follows a link: a file or a link fails with ENOTDIR. */
+async function removeIfEmpty(dir: string): Promise<boolean> {
+  return rmdir(dir).then(
+    () => true,
+    () => false,
+  );
 }
 
 /** The key is valid, but longer than this file system allows for a name or a path. */
