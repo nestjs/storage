@@ -1,6 +1,6 @@
 import type { LocalDiskOptions } from '../interfaces/disk-options.interface.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { constants, createReadStream, mkdirSync, realpathSync, type Stats } from 'node:fs';
+import { constants, createReadStream, mkdirSync, realpathSync, type BigIntStats, type Stats } from 'node:fs';
 import {
   copyFile,
   lstat,
@@ -39,9 +39,13 @@ import { compareKeys, decodeCursor, encodeCursor } from './in-memory.disk.js';
 /** Temp files and metadata live here, inside the root, so a rename never crosses file systems. */
 const INTERNAL_DIR = '.nest-storage';
 
-/** What a sidecar holds: what the file name can't tell. `for` ties it to one version of the file. */
+/**
+ * What a sidecar holds: what the file name can't tell. Its name is the version key of the file it
+ * describes (see `versionKey()`). `from` is where that version was written before its rename,
+ * relative to the root, as processes sharing a disk may mount it at different paths.
+ */
 interface Sidecar {
-  for: string;
+  from?: string;
   contentType?: string;
   cacheControl?: string;
   contentDisposition?: string;
@@ -59,8 +63,10 @@ interface Sidecar {
  *   symbolic link on the way to a file, or as the file, is refused, so a link placed inside
  *   the root can't lead reads or writes outside it.
  * - **Metadata** that the extension doesn't imply (an explicit content type, cache control,
- *   disposition, your metadata) is kept in a JSON sidecar under `.nest-storage/meta/`, tied to
- *   the file's size and modification time, so a sidecar never describes another version.
+ *   disposition, your metadata) is kept in a JSON sidecar, one per version of the file, at
+ *   `.nest-storage/meta/<sha256 of the key>/<size-mtime-inode>.json`. A sidecar never describes
+ *   another version, and concurrent writes to one key, from any process, never share one: the
+ *   last write renamed over the key wins, with its metadata, as on the other disks.
  */
 export class LocalDisk extends StorageDisk {
   readonly root: string;
@@ -124,11 +130,12 @@ export class LocalDisk extends StorageDisk {
       if (stats.size !== size) {
         throw new StorageError(`Local disk write size does not match the written body for "${key}"`);
       }
+      const version = this.versionKey(await handle.stat({ bigint: true }));
 
       await handle.close();
       handle = undefined;
 
-      await this.commit(key, tmp, target, stats, sidecarOf(key, file));
+      await this.commit(key, tmp, target, version, sidecarOf(key, file));
       return { key, size, contentType: file.contentType, etag: etagOf(stats) };
     } catch (error) {
       await handle?.close().catch(() => undefined);
@@ -142,14 +149,15 @@ export class LocalDisk extends StorageDisk {
     const tmp = join(this.tmpDir, randomUUID());
 
     try {
-      const meta = keepContentType(await this.readSidecar(from, source.stats), from, to);
+      const meta = keepContentType(await this.readSidecar(from, source.stats, source.version), from, to);
       await source.handle.close();
 
       // A clone where the file system supports it (APFS, Btrfs, XFS), a copy elsewhere.
       await copyFile(source.path, tmp, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
       const stats = await lstat(tmp);
+      const version = this.versionKey(await lstat(tmp, { bigint: true }));
       const target = this.pathOf(this.checkKey(to));
-      await this.commit(to, tmp, target, stats, meta);
+      await this.commit(to, tmp, target, version, meta);
 
       const contentType = meta?.contentType ?? contentTypeFromKey(to);
       return { key: to, size: stats.size, contentType, etag: etagOf(stats) };
@@ -162,13 +170,13 @@ export class LocalDisk extends StorageDisk {
 
   protected override async moveObject(from: string, to: string): Promise<StorageWriteResult> {
     const source = await this.openFile(from);
-    const meta = keepContentType(await this.readSidecar(from, source.stats), from, to);
+    const meta = keepContentType(await this.readSidecar(from, source.stats, source.version), from, to);
     await source.handle.close();
 
     const target = this.pathOf(this.checkKey(to));
-    // A rename keeps size and mtime, so the sidecar still matches the file.
-    await this.commit(to, source.path, target, source.stats, meta);
-    await rm(this.sidecarPath(from), { force: true });
+    // A rename keeps size, mtime and inode, so the version doesn't change.
+    await this.commit(to, source.path, target, source.version, meta);
+    await this.removeStaleSidecars(from, source.path);
     await this.prune([dirname(source.path)]);
 
     const contentType = meta?.contentType ?? contentTypeFromKey(to);
@@ -176,26 +184,93 @@ export class LocalDisk extends StorageDisk {
   }
 
   /**
-   * Renames `file` to `target`: the sidecar first (or the stale one removed), then the file.
-   * A reader in between sees the old file, whose version no longer matches the sidecar, so it
-   * gets inferred metadata rather than another version's.
+   * Renames `file` to `target`: its version's sidecar first, then the file, then the sidecars of
+   * versions no longer readable are removed. Each version has its own sidecar, so whichever of
+   * several concurrent writes is renamed last, its sidecar is there, and a crash in between
+   * leaves the old file with its own. On Windows, a rename onto a file another process has open
+   * can fail (EPERM); that is untested.
    */
-  private async commit(key: string, file: string, target: string, stats: Stats, sidecar: Sidecar | undefined) {
+  private async commit(key: string, file: string, target: string, version: string, sidecar: Sidecar | undefined) {
     await this.ensureParent(key, target);
 
-    const metaPath = this.sidecarPath(key);
-    if (sidecar) {
-      const metaTmp = join(this.tmpDir, `${randomUUID()}.json`);
-      await writeFile(metaTmp, JSON.stringify({ ...sidecar, for: etagOf(stats) }), { flag: 'wx' });
-      await rename(metaTmp, metaPath).catch(async (error) => {
-        await rm(metaTmp, { force: true });
-        throw error;
-      });
-    } else {
-      await rm(metaPath, { force: true });
+    const metaPath =
+      sidecar && (await this.writeSidecar(key, version, { ...sidecar, from: relative(this.realRoot, file) }));
+    try {
+      await this.place(key, file, target);
+    } catch (error) {
+      if (metaPath) {
+        await rm(metaPath, { force: true });
+        await removeIfEmpty(dirname(metaPath));
+      }
+      throw error;
     }
 
-    await this.place(key, file, target);
+    await this.removeStaleSidecars(key, target);
+  }
+
+  /** Written to a temp file, then renamed: `removeStaleSidecars()` may remove the key's directory in between. */
+  private async writeSidecar(key: string, version: string, sidecar: Sidecar): Promise<string> {
+    const dir = this.sidecarDir(key);
+    const path = join(dir, `${version}.json`);
+    const tmp = join(this.tmpDir, `${randomUUID()}.json`);
+    await writeFile(tmp, JSON.stringify(sidecar), { flag: 'wx' });
+
+    try {
+      for (let attempt = 1; ; attempt++) {
+        await mkdir(dir, { recursive: true });
+        try {
+          await rename(tmp, path);
+          return path;
+        } catch (error) {
+          if (!isMissing(error) || attempt === 3) {
+            throw error;
+          }
+        }
+      }
+    } catch (error) {
+      await rm(tmp, { force: true });
+      throw error;
+    }
+  }
+
+  /**
+   * Removes a key's sidecars that no version at the key can read any more. A version whose file
+   * is still at `from` is being written, and kept. Once it moved, it is the file at the key
+   * (kept), or one that a later write replaced or a failed write removed: neither comes back.
+   * It decides from the file system alone, so writes from other processes are safe.
+   */
+  private async removeStaleSidecars(key: string, target: string): Promise<void> {
+    // TODO: remove after 0.1, with readLegacySidecar()
+    await rm(this.legacySidecarPath(key), { force: true });
+
+    const dir = this.sidecarDir(key);
+    let names: string[];
+    try {
+      names = await readdir(dir);
+    } catch (error) {
+      if (isMissing(error)) {
+        return;
+      }
+      throw error;
+    }
+
+    for (const name of names) {
+      const path = join(dir, name);
+      const from = (await readSidecarFile(path))?.from;
+      if (from !== undefined && (await exists(join(this.realRoot, from)))) {
+        continue;
+      }
+      // After `from` is gone: a version renamed after this check is a later one
+      const current = await lstat(target, { bigint: true }).then(
+        (stats) => (stats.isFile() ? this.versionKey(stats) : undefined),
+        () => undefined,
+      );
+      if (name !== `${current}.json`) {
+        await rm(path, { force: true });
+      }
+    }
+
+    await removeIfEmpty(dir);
   }
 
   /**
@@ -225,10 +300,10 @@ export class LocalDisk extends StorageDisk {
   // --- reads ---------------------------------------------------------------------------
 
   protected async readObject(key: string, range: StorageRange | undefined): Promise<StorageDownload> {
-    const { handle, stats } = await this.openFile(key);
+    const { handle, stats, version } = await this.openFile(key);
 
     try {
-      const file = await this.describe(key, stats);
+      const file = await this.describe(key, stats, version);
 
       let bounds: { start: number; end: number } | undefined;
       if (range) {
@@ -253,9 +328,9 @@ export class LocalDisk extends StorageDisk {
   }
 
   protected async headObject(key: string): Promise<StorageFile> {
-    const { handle, stats } = await this.openFile(key);
+    const { handle, stats, version } = await this.openFile(key);
     try {
-      return await this.describe(key, stats);
+      return await this.describe(key, stats, version);
     } finally {
       await handle.close();
     }
@@ -282,7 +357,7 @@ export class LocalDisk extends StorageDisk {
         }
       }
 
-      await rm(this.sidecarPath(key), { force: true });
+      await this.removeStaleSidecars(key, path);
     }
 
     await this.prune(emptied);
@@ -376,13 +451,27 @@ export class LocalDisk extends StorageDisk {
     return join(this.realRoot, ...key.split('/'));
   }
 
-  /** Flat and hashed: `a` and `a.json/b` would collide in a mirrored tree. */
-  private sidecarPath(key: string): string {
-    return join(this.metaDir, `${createHash('sha256').update(key).digest('hex')}.json`);
+  /** A directory per key, flat and hashed: `a` and `a.json/b` would collide in a mirrored tree. */
+  private sidecarDir(key: string): string {
+    return join(this.metaDir, createHash('sha256').update(key).digest('hex'));
+  }
+
+  /** Where 0.0.x kept the one sidecar of a key, tied to the etag by its `for` field. */
+  private legacySidecarPath(key: string): string {
+    return `${this.sidecarDir(key)}.json`;
+  }
+
+  /**
+   * The name of a version's sidecar: size, modification time and inode, all kept by a rename.
+   * Unlike the etag, two versions written at the same time never share it, even where timestamps
+   * are coarse (seconds on HFS+ and FAT). Bigints, as Windows file IDs exceed 2^53.
+   */
+  private versionKey(stats: BigIntStats): string {
+    return `${stats.size.toString(16)}-${stats.mtimeNs.toString(16)}-${stats.ino.toString(16)}`;
   }
 
   /** Opens the file without following a link, after checking its directory resolves inside the root. */
-  private async openFile(key: string): Promise<{ handle: FileHandle; stats: Stats; path: string }> {
+  private async openFile(key: string): Promise<{ handle: FileHandle; stats: Stats; version: string; path: string }> {
     const path = this.pathOf(this.checkKey(key));
     if (!(await this.parentInside(path))) {
       throw new StorageFileNotFoundError(key);
@@ -408,7 +497,7 @@ export class LocalDisk extends StorageDisk {
       throw new StorageFileNotFoundError(key);
     }
 
-    return { handle, stats, path };
+    return { handle, stats, version: this.versionKey(await handle.stat({ bigint: true })), path };
   }
 
   /** Whether the directory holding `path` resolves (through any links) to a place inside the root. */
@@ -472,17 +561,46 @@ export class LocalDisk extends StorageDisk {
     }
   }
 
-  private async readSidecar(key: string, stats: Stats): Promise<Sidecar | undefined> {
-    try {
-      const sidecar = JSON.parse(await readFile(this.sidecarPath(key), 'utf8')) as Sidecar;
-      return sidecar.for === etagOf(stats) ? sidecar : undefined;
-    } catch {
-      return undefined;
+  /** The sidecar of this version: by its version key, else by size and time, else a 0.0.x one. */
+  private async readSidecar(key: string, stats: Stats, version: string): Promise<Sidecar | undefined> {
+    const exact = await readSidecarFile(join(this.sidecarDir(key), `${version}.json`));
+    if (exact) {
+      return storedFields(exact);
     }
+
+    const names = await readdir(this.sidecarDir(key)).catch(() => []);
+    if (names.length > 0) {
+      return this.readSameTimeSidecar(key, version, names);
+    }
+    return this.readLegacySidecar(key, stats);
   }
 
-  private async describe(key: string, stats: Stats): Promise<StorageFile> {
-    const sidecar = await this.readSidecar(key, stats);
+  /**
+   * Where inode numbers might not last (assumed, untested: FAT on Linux, some network mounts),
+   * the one sidecar of the same size and modification time stands in, unless it belongs to a
+   * write still in flight: that one describes another file of the same size and time.
+   */
+  private async readSameTimeSidecar(key: string, version: string, names: string[]): Promise<Sidecar | undefined> {
+    const sameTime = version.slice(0, version.lastIndexOf('-') + 1);
+    const candidates = names.filter((name) => name.startsWith(sameTime));
+    if (candidates.length !== 1) {
+      return undefined;
+    }
+
+    const sidecar = await readSidecarFile(join(this.sidecarDir(key), candidates[0]));
+    const inFlight = sidecar?.from !== undefined && (await exists(join(this.realRoot, sidecar.from)));
+    return sidecar && !inFlight ? storedFields(sidecar) : undefined;
+  }
+
+  // TODO: remove after 0.1, with the legacy removal in removeStaleSidecars()
+  /** A 0.0.x sidecar: one per key, flat, and tied to the file's etag by its `for` field. */
+  private async readLegacySidecar(key: string, stats: Stats): Promise<Sidecar | undefined> {
+    const legacy = await readSidecarFile(this.legacySidecarPath(key));
+    return legacy?.for === etagOf(stats) ? storedFields(legacy) : undefined;
+  }
+
+  private async describe(key: string, stats: Stats, version: string): Promise<StorageFile> {
+    const sidecar = await this.readSidecar(key, stats, version);
     return {
       key,
       size: stats.size,
@@ -502,10 +620,28 @@ export class LocalDisk extends StorageDisk {
  */
 function keepContentType(sidecar: Sidecar | undefined, from: string, to: string): Sidecar | undefined {
   const contentType = sidecar?.contentType ?? contentTypeFromKey(from);
-  const { contentType: _stored, ...rest } = sidecar ?? { for: '' };
+  const { contentType: _stored, ...rest } = sidecar ?? {};
   const next: Sidecar = contentType === contentTypeFromKey(to) ? rest : { ...rest, contentType };
 
-  return Object.keys(next).length > 1 ? next : undefined;
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+/** A stored sidecar, or `undefined` when it is missing or unreadable. */
+async function readSidecarFile(path: string): Promise<(Sidecar & { for?: string }) | undefined> {
+  try {
+    return JSON.parse(await readFile(path, 'utf8')) as Sidecar & { for?: string };
+  } catch {
+    return undefined;
+  }
+}
+
+/** What a stored sidecar says about the file, without the fields that tie it to a version. */
+function storedFields({ contentType, cacheControl, contentDisposition, metadata }: Sidecar): Sidecar {
+  return Object.fromEntries(
+    Object.entries({ contentType, cacheControl, contentDisposition, metadata }).filter(
+      ([, value]) => value !== undefined,
+    ),
+  );
 }
 
 /** Size and modification time, as Express's `serve-static` does. Stable across a rename. */
@@ -514,7 +650,7 @@ function etagOf(stats: Stats): string {
 }
 
 function sidecarOf(key: string, file: StorageObjectWrite): Sidecar | undefined {
-  const sidecar: Sidecar = { for: '' };
+  const sidecar: Sidecar = {};
   if (file.explicitContentType && file.contentType !== contentTypeFromKey(key)) {
     sidecar.contentType = file.contentType;
   }
@@ -528,7 +664,14 @@ function sidecarOf(key: string, file: StorageObjectWrite): Sidecar | undefined {
     sidecar.metadata = file.metadata;
   }
 
-  return Object.keys(sidecar).length > 1 ? sidecar : undefined;
+  return Object.keys(sidecar).length > 0 ? sidecar : undefined;
+}
+
+async function exists(path: string): Promise<boolean> {
+  return lstat(path).then(
+    () => true,
+    () => false,
+  );
 }
 
 function isMissing(error: unknown): boolean {

@@ -5,14 +5,16 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   truncateSync,
   writeFileSync,
 } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { open, rename } from 'node:fs/promises';
+import { open, rename, type FileHandle } from 'node:fs/promises';
 import { LocalDisk, StorageFileNotFoundError, StorageInvalidKeyError, StorageKeyConflictError } from '../lib/index.js';
 import { StorageError } from '../lib/errors/storage.error.js';
 
@@ -378,6 +380,117 @@ describe('LocalDisk', () => {
     });
   });
 
+  describe('concurrent writes to one key', () => {
+    afterEach(() => {
+      vi.mocked(rename).mockImplementation(realRename);
+      vi.restoreAllMocks();
+    });
+
+    /** Holds the first rename of a file (not a sidecar) onto `key` until `release()`. */
+    function holdFirstPlace(key: string) {
+      const target = disk.path(key);
+      let reached!: () => void;
+      let release!: () => void;
+      const atRename = new Promise<void>((resolve) => (reached = resolve));
+      const released = new Promise<void>((resolve) => (release = resolve));
+      let held = false;
+      vi.mocked(rename).mockImplementation(async (from, to) => {
+        if (!held && to === target && !String(from).endsWith('.json')) {
+          held = true;
+          reached();
+          await released;
+        }
+        return realRename(from, to);
+      });
+      return { atRename, release };
+    }
+
+    /** Writes A until its file rename, then runs `between` (all of B), then the rest of A: A's file stays. */
+    async function interleave(key: string, a: Parameters<LocalDisk['put']>, between: () => Promise<unknown>) {
+      const hold = holdFirstPlace(key);
+      const first = disk.put(...a);
+      await hold.atRename;
+      await between();
+      hold.release();
+      await first;
+    }
+
+    it('the file that stays keeps the metadata of the put that wrote it, across instances', async () => {
+      const other = new LocalDisk({ root }); // as another process on the same root would
+      await interleave(
+        'race.bin',
+        ['race.bin', 'AA', { contentType: 'application/x-a', metadata: { writer: 'A' } }],
+        () => other.put('race.bin', 'B', { contentType: 'application/x-b', metadata: { writer: 'B' } }),
+      );
+
+      expect(await disk.getText('race.bin')).toBe('AA');
+      expect(await disk.stat('race.bin')).toMatchObject({ contentType: 'application/x-a', metadata: { writer: 'A' } });
+    });
+
+    it('a put without metadata that loses the race leaves the winner its metadata', async () => {
+      await interleave('race.bin', ['race.bin', 'AA', { metadata: { writer: 'A' } }], () => disk.put('race.bin', 'B'));
+
+      expect(await disk.getText('race.bin')).toBe('AA');
+      expect((await disk.stat('race.bin')).metadata).toEqual({ writer: 'A' });
+    });
+
+    it('versions of the same size and modification time keep their own metadata', async () => {
+      // A file system with coarse timestamps: both versions get the same mtime
+      const probe = await open(join(tempDir('probe'), 'file'), 'wx');
+      const prototype = Object.getPrototypeOf(probe) as { stat(options?: unknown): Promise<unknown> };
+      await probe.close();
+      const stat = prototype.stat;
+      const spy = vi.spyOn(prototype, 'stat').mockImplementation(async function (this: FileHandle, options) {
+        await this.utimes(1_700_000_000, 1_700_000_000);
+        return stat.call(this, options);
+      });
+
+      await interleave('race.bin', ['race.bin', 'A', { metadata: { writer: 'A' } }], () =>
+        disk.put('race.bin', 'B', { metadata: { writer: 'B' } }),
+      );
+      spy.mockRestore();
+
+      expect(await disk.getText('race.bin')).toBe('A');
+      expect((await disk.stat('race.bin')).metadata).toEqual({ writer: 'A' });
+    });
+
+    it('a delete in between keeps the metadata of the put that lands after it', async () => {
+      await disk.put('race.bin', 'old', { metadata: { writer: 'old' } });
+      await interleave('race.bin', ['race.bin', 'AA', { metadata: { writer: 'A' } }], () => disk.delete('race.bin'));
+
+      expect(await disk.getText('race.bin')).toBe('AA');
+      expect((await disk.stat('race.bin')).metadata).toEqual({ writer: 'A' });
+      expect(readdirSync(join(root, '.nest-storage', 'meta'))).toHaveLength(1);
+    });
+
+    it('leaves one sidecar per key once the writes are done', async () => {
+      await interleave('race.bin', ['race.bin', 'AA', { metadata: { writer: 'A' } }], () =>
+        disk.put('race.bin', 'B', { metadata: { writer: 'B' } }),
+      );
+      const [dir] = readdirSync(join(root, '.nest-storage', 'meta'));
+      expect(readdirSync(join(root, '.nest-storage', 'meta', dir))).toHaveLength(1);
+
+      await disk.delete('race.bin');
+      expect(readdirSync(join(root, '.nest-storage', 'meta'))).toEqual([]);
+    });
+
+    it('a put that fails to place its file leaves the current file its metadata', async () => {
+      await disk.put('doc.bin', 'one', { metadata: { v: '1' } });
+      vi.mocked(rename).mockImplementation(async (from, to) => {
+        if (to === disk.path('doc.bin') && !String(from).endsWith('.json')) {
+          throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+        }
+        return realRename(from, to);
+      });
+
+      await expect(disk.put('doc.bin', 'two', { metadata: { v: '2' } })).rejects.toThrow('EACCES');
+      vi.mocked(rename).mockImplementation(realRename);
+
+      expect(await disk.getText('doc.bin')).toBe('one');
+      expect((await disk.stat('doc.bin')).metadata).toEqual({ v: '1' });
+    });
+  });
+
   describe('file system limits', () => {
     it('a key and a key under it can not both exist', async () => {
       await disk.put('a', 'file');
@@ -423,6 +536,38 @@ describe('LocalDisk', () => {
       writeFileSync(join(root, 'doc.bin'), 'changed!');
       const file = await disk.stat('doc.bin');
       expect(file).toMatchObject({ contentType: 'application/octet-stream', metadata: {} });
+    });
+
+    it('reads the one sidecar of the same size and time after the inode number changed', async () => {
+      // As where inode numbers don't survive a remount (assumed for FAT on Linux, some network mounts)
+      await disk.put('doc.bin', 'one', { metadata: { v: '1' } });
+      const [dir] = readdirSync(join(root, '.nest-storage', 'meta'));
+      const metaDir = join(root, '.nest-storage', 'meta', dir);
+      const [name] = readdirSync(metaDir);
+      const sameTime = name.slice(0, name.lastIndexOf('-') + 1);
+      renameSync(join(metaDir, name), join(metaDir, `${sameTime}ffff.json`));
+      expect((await disk.stat('doc.bin')).metadata).toEqual({ v: '1' });
+
+      writeFileSync(join(metaDir, `${sameTime}eeee.json`), JSON.stringify({ metadata: { v: 'other' } }));
+      expect((await disk.stat('doc.bin')).metadata).toEqual({});
+    });
+
+    // TODO: remove after 0.1, with LocalDisk.readLegacySidecar()
+    it('reads a sidecar that 0.0.x stored, and removes it on the next write', async () => {
+      await disk.put('doc.bin', 'one');
+      const { etag } = await disk.stat('doc.bin');
+      const legacy = join(
+        root,
+        '.nest-storage',
+        'meta',
+        `${createHash('sha256').update('doc.bin').digest('hex')}.json`,
+      );
+      writeFileSync(legacy, JSON.stringify({ for: etag, contentType: 'application/x-one', metadata: { v: '1' } }));
+      expect(await disk.stat('doc.bin')).toMatchObject({ contentType: 'application/x-one', metadata: { v: '1' } });
+
+      await disk.put('doc.bin', 'two');
+      expect(existsSync(legacy)).toBe(false);
+      expect((await disk.stat('doc.bin')).metadata).toEqual({});
     });
 
     it('keys whose sidecars would collide in a mirrored tree', async () => {
