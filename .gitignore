@@ -20,3 +20,6 @@ dist
 
 # packed tarballs
 *.tgz
+
+# Claude Code
+.claude/worktrees/
