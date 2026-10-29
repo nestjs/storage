@@ -256,10 +256,6 @@ export class S3Disk extends StorageDisk {
     };
 
     try {
-      for (const data of firstParts) {
-        upload(data);
-      }
-
       for (;;) {
         while (inFlight.size >= this.concurrency && !failure) {
           await Promise.race(inFlight);
@@ -268,7 +264,7 @@ export class S3Disk extends StorageDisk {
           throw failure.error;
         }
 
-        const data = await parts.next();
+        const data = firstParts.shift() ?? (await parts.next());
         if (!data) {
           break;
         }

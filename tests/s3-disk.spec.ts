@@ -98,10 +98,14 @@ describe('S3Disk', () => {
       expect((await disk.stat('big/multi.bin')).size).toBe(data.length);
     });
 
-    it('keeps at most `concurrency` parts in flight', async () => {
-      const disk = s3({ multipart: { partSize: 5 * MiB, concurrency: 2 } });
+    const partSize = 5 * MiB;
+    const concurrencyBody = bytes(26 * MiB);
+
+    it.each([1, 2, 4])('honors multipart concurrency %i', { timeout: 30_000 }, async (concurrency) => {
       let inFlight = 0;
       let peak = 0;
+      let releaseImmediately = false;
+      const pending: (() => void)[] = [];
 
       const original = globalThis.fetch;
       const counting: typeof fetch = async (url, init) => {
@@ -110,7 +114,12 @@ describe('S3Disk', () => {
           peak = Math.max(peak, ++inFlight);
         }
         try {
-          return await original(url, init);
+          const response = await original(url, init);
+          // Hold part responses so the concurrency check doesn't depend on network speed
+          if (isPart && !releaseImmediately) {
+            await new Promise<void>((resolve) => pending.push(resolve));
+          }
+          return response;
         } finally {
           if (isPart) {
             inFlight--;
@@ -118,11 +127,28 @@ describe('S3Disk', () => {
         }
       };
 
-      await s3({ multipart: { partSize: 5 * MiB, concurrency: 2 }, fetch: counting }).put('p.bin', bytes(26 * MiB));
+      const data = concurrencyBody;
+      const partCount = Math.ceil(data.length / partSize);
+      const upload = s3({ multipart: { partSize, concurrency }, fetch: counting }).put('p.bin', data);
+      upload.catch(() => undefined);
 
-      expect(peak).toBe(2);
-      expect(fake.object('p.bin')!.data.length).toBe(26 * MiB);
-      void disk;
+      try {
+        for (let remaining = partCount; remaining > 0; remaining -= concurrency) {
+          const batchSize = Math.min(concurrency, remaining);
+          await vi.waitFor(() => expect(pending.length).toBeGreaterThanOrEqual(batchSize), { timeout: 10_000 });
+          expect(inFlight).toBe(batchSize);
+          pending.splice(0).forEach((release) => release());
+        }
+
+        const result = await upload;
+        expect(peak).toBe(concurrency);
+        expect(result.size).toBe(data.length);
+        expect(fake.object('p.bin')!.data.equals(data)).toBe(true);
+      } finally {
+        releaseImmediately = true;
+        pending.splice(0).forEach((release) => release());
+        await upload.catch(() => undefined);
+      }
     });
 
     it('aborts the multipart upload when a part fails, and stores nothing', async () => {
