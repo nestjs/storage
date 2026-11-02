@@ -1,3 +1,4 @@
+import type { Readable } from 'node:stream';
 import type { StorageDiskOptions } from '../interfaces/disk-options.interface.js';
 import type {
   StorageBody,
@@ -10,6 +11,7 @@ import type {
   StorageObjectWrite,
   StoragePutOptions,
   StorageRange,
+  StorageSignalOptions,
   StorageSignedUpload,
   StorageSignedUploadRequest,
   StorageSignedUrlRequest,
@@ -66,7 +68,7 @@ export abstract class StorageDisk {
   }
 
   // ---------------------------------------------------------------------------------------
-  // What a disk implements. Keys and options arrive validated.
+  // What a disk implements. Keys and options arrive validated, and a signal not yet aborted.
 
   /** Writes the whole body, then makes it visible at `key` at once, replacing any file there. */
   protected abstract writeObject(
@@ -75,18 +77,31 @@ export abstract class StorageDisk {
     file: StorageObjectWrite,
   ): Promise<StorageWriteResult>;
   /** Throws `StorageFileNotFoundError`, or `StorageRangeNotSatisfiableError` for a range past the end. */
-  protected abstract readObject(key: string, range: StorageRange | undefined): Promise<StorageDownload>;
+  protected abstract readObject(
+    key: string,
+    range: StorageRange | undefined,
+    options?: StorageSignalOptions,
+  ): Promise<StorageDownload>;
   /** Throws `StorageFileNotFoundError`. */
-  protected abstract headObject(key: string): Promise<StorageFile>;
+  protected abstract headObject(key: string, options?: StorageSignalOptions): Promise<StorageFile>;
   /** Deletes the keys that exist; missing keys are not an error. */
-  protected abstract deleteObjects(keys: string[]): Promise<void>;
-  protected abstract listObjects(options: { prefix: string; cursor?: string; limit: number }): Promise<StorageListPage>;
-  /** Copies content and metadata. Throws `StorageFileNotFoundError` for a missing source. */
-  protected abstract copyObject(from: string, to: string): Promise<StorageWriteResult>;
+  protected abstract deleteObjects(keys: string[], options?: StorageSignalOptions): Promise<void>;
+  protected abstract listObjects(options: {
+    prefix: string;
+    cursor?: string;
+    limit: number;
+    signal?: AbortSignal;
+  }): Promise<StorageListPage>;
+  /**
+   * Copies content and metadata. Throws `StorageFileNotFoundError` for a missing source. Once the
+   * copy is made, an abort no longer fails it.
+   */
+  protected abstract copyObject(from: string, to: string, options?: StorageSignalOptions): Promise<StorageWriteResult>;
 
   /** Default: copy, then delete the source. A disk that can rename atomically overrides it. */
-  protected async moveObject(from: string, to: string): Promise<StorageWriteResult> {
-    const result = await this.copyObject(from, to);
+  protected async moveObject(from: string, to: string, options?: StorageSignalOptions): Promise<StorageWriteResult> {
+    const result = await this.copyObject(from, to, options);
+    // Not abortable: stopping here would leave the file at both keys
     await this.deleteObjects([from]);
     return result;
   }
@@ -128,7 +143,15 @@ export abstract class StorageDisk {
   /** The file's body as a stream, and its metadata. Throws `StorageFileNotFoundError`. */
   async get(key: string, options: StorageGetOptions = {}): Promise<StorageDownload> {
     assertValidKey(key);
-    return this.readObject(key, options.range === undefined ? undefined : normalizeRange(options.range));
+    const range = options.range === undefined ? undefined : normalizeRange(options.range);
+    const { signal } = options;
+    signal?.throwIfAborted();
+
+    const download = await this.readObject(key, range, { signal });
+    if (signal) {
+      endOnAbort(download.body, signal);
+    }
+    return download;
   }
 
   async getBuffer(key: string): Promise<Buffer> {
@@ -140,9 +163,9 @@ export abstract class StorageDisk {
     return (await this.getBuffer(key)).toString('utf8');
   }
 
-  async exists(key: string): Promise<boolean> {
+  async exists(key: string, options: StorageSignalOptions = {}): Promise<boolean> {
     try {
-      await this.stat(key);
+      await this.stat(key, options);
       return true;
     } catch (error) {
       if (error instanceof StorageFileNotFoundError) {
@@ -153,17 +176,19 @@ export abstract class StorageDisk {
   }
 
   /** Throws `StorageFileNotFoundError`. */
-  async stat(key: string): Promise<StorageFile> {
+  async stat(key: string, options: StorageSignalOptions = {}): Promise<StorageFile> {
     assertValidKey(key);
-    return this.headObject(key);
+    options.signal?.throwIfAborted();
+    return this.headObject(key, { signal: options.signal });
   }
 
   /** Deletes one key or several. Deleting a missing key is not an error. */
-  async delete(keys: string | readonly string[]): Promise<void> {
+  async delete(keys: string | readonly string[], options: StorageSignalOptions = {}): Promise<void> {
     const list = typeof keys === 'string' ? [keys] : [...keys];
     list.forEach((key) => assertValidKey(key));
+    options.signal?.throwIfAborted();
     if (list.length > 0) {
-      await this.deleteObjects([...new Set(list)]);
+      await this.deleteObjects([...new Set(list)], { signal: options.signal });
     }
   }
 
@@ -179,8 +204,9 @@ export abstract class StorageDisk {
     if (options.cursor !== undefined && (typeof options.cursor !== 'string' || options.cursor === '')) {
       throw new TypeError('list(): `cursor` must be the cursor of a previous page');
     }
+    options.signal?.throwIfAborted();
 
-    return this.listObjects({ prefix, cursor: options.cursor, limit });
+    return this.listObjects({ prefix, cursor: options.cursor, limit, signal: options.signal });
   }
 
   /** Every file under `prefix`, page by page. */
@@ -194,23 +220,25 @@ export abstract class StorageDisk {
   }
 
   /** Copies content and metadata within this disk. Throws `StorageFileNotFoundError`. */
-  async copy(from: string, to: string): Promise<StorageWriteResult> {
+  async copy(from: string, to: string, options: StorageSignalOptions = {}): Promise<StorageWriteResult> {
     assertValidKey(from);
     assertValidKey(to);
+    options.signal?.throwIfAborted();
     if (from === to) {
-      return this.touchResult(from);
+      return this.touchResult(from, options.signal);
     }
-    return this.copyObject(from, to);
+    return this.copyObject(from, to, { signal: options.signal });
   }
 
   /** Moves within this disk. Atomic on a local disk; a copy and a delete on S3. */
-  async move(from: string, to: string): Promise<StorageWriteResult> {
+  async move(from: string, to: string, options: StorageSignalOptions = {}): Promise<StorageWriteResult> {
     assertValidKey(from);
     assertValidKey(to);
+    options.signal?.throwIfAborted();
     if (from === to) {
-      return this.touchResult(from);
+      return this.touchResult(from, options.signal);
     }
-    return this.moveObject(from, to);
+    return this.moveObject(from, to, { signal: options.signal });
   }
 
   /** The public URL of `key` under `publicUrl`. The file must be publicly readable there. */
@@ -270,10 +298,27 @@ export abstract class StorageDisk {
     return this.signer;
   }
 
-  private async touchResult(key: string): Promise<StorageWriteResult> {
-    const file = await this.headObject(key);
+  private async touchResult(key: string, signal: AbortSignal | undefined): Promise<StorageWriteResult> {
+    const file = await this.headObject(key, { signal });
     return { key, size: file.size, contentType: file.contentType, etag: file.etag };
   }
+}
+
+/**
+ * Ends `body` with the signal's reason when it aborts, so a download stops the same way on every
+ * disk. A signal that aborted while the disk was opening the file fails the read.
+ */
+function endOnAbort(body: Readable, signal: AbortSignal): void {
+  if (signal.aborted) {
+    body.destroy();
+    signal.throwIfAborted();
+  }
+  if (body.closed) {
+    return;
+  }
+  const onAbort = () => body.destroy(signal.reason);
+  signal.addEventListener('abort', onAbort, { once: true });
+  body.once('close', () => signal.removeEventListener('abort', onAbort));
 }
 
 /** Whether a disk signs its URLs for the app to serve (internal, for the HTTP helpers). */

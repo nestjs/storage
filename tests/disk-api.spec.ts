@@ -519,6 +519,22 @@ describe('a custom disk extending StorageDisk', () => {
     expect([...disk.files.keys()]).toEqual(['to.txt']);
   });
 
+  it('gets the abort handling of every disk without declaring a signal itself', async () => {
+    const disk = new MapDisk();
+    await disk.put('a.txt', 'abc');
+    disk.calls.length = 0;
+    const reason = new Error('client went away');
+
+    await expect(disk.stat('a.txt', { signal: AbortSignal.abort(reason) })).rejects.toBe(reason);
+    await expect(disk.delete('a.txt', { signal: AbortSignal.abort(reason) })).rejects.toBe(reason);
+    expect(disk.calls).toEqual([]);
+
+    const controller = new AbortController();
+    const download = await disk.get('a.txt', { signal: controller.signal });
+    controller.abort(reason);
+    await expect(download.body.toArray()).rejects.toBe(reason);
+  });
+
   it('dedupes the keys it is asked to delete, and skips the call for none', async () => {
     const disk = new MapDisk();
     await disk.delete([]);

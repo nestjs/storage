@@ -60,11 +60,21 @@ export interface StoragePutOptions {
   signal?: AbortSignal;
 }
 
-export interface StorageGetOptions {
+/** Accepted by every disk operation that does I/O. */
+export interface StorageSignalOptions {
+  /**
+   * Aborts the operation: it rejects with the signal's reason, and S3 stops retrying. A
+   * multi-key `delete()` stops between keys; `copy()` and `move()` stop only before they change
+   * anything, so an abort never leaves a move half done.
+   */
+  signal?: AbortSignal;
+}
+
+export interface StorageGetOptions extends StorageSignalOptions {
   range?: StorageRange;
 }
 
-export interface StorageListOptions {
+export interface StorageListOptions extends StorageSignalOptions {
   /** Only keys that start with this string (not necessarily at a `/`). */
   prefix?: string;
   /** The `cursor` of the previous page. */

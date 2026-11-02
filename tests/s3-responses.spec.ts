@@ -224,6 +224,56 @@ describe('S3Disk retries by error code', () => {
     await expect(s3.put('a.txt', 'x', { signal: controller.signal })).rejects.toBe(reason);
     expect(calls).toHaveLength(1);
   });
+
+  it("a caller's abort during a retry's backoff stops a read at once", async () => {
+    const controller = new AbortController();
+    const reason = new Error('client went away');
+    const { disk: s3, calls } = disk(
+      () => {
+        setTimeout(() => controller.abort(reason), 10);
+        return s3Error(503, 'SlowDown');
+      },
+      { retry: { attempts: 3, backoff: { delay: 60_000, jitter: 'none' } } },
+    );
+
+    await expect(s3.get('a.txt', { signal: controller.signal })).rejects.toBe(reason);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('an abort stops a delete between keys', async () => {
+    const controller = new AbortController();
+    const reason = new Error('shutting down');
+    const { disk: s3, calls } = disk(
+      () => {
+        controller.abort(reason);
+        return new Response(null, { status: 204 });
+      },
+      { batchDelete: false },
+    );
+
+    await expect(s3.delete(['a.txt', 'b.txt', 'c.txt'], { signal: controller.signal })).rejects.toBe(reason);
+    expect(calls.map((c) => `${c.method} ${c.url.pathname}`)).toEqual(['DELETE /shop/a.txt']);
+  });
+
+  it('an abort after the copy of a move still deletes the source, so the file is not left at both keys', async () => {
+    const controller = new AbortController();
+    const { disk: s3, calls } = disk((call) => {
+      if (call.method === 'PUT') {
+        controller.abort(new Error('client went away'));
+        return xml('<CopyObjectResult><ETag>"c"</ETag></CopyObjectResult>');
+      }
+      return call.method === 'DELETE'
+        ? new Response(null, { status: 204 })
+        : ok({ 'content-length': '1', 'content-type': 'text/plain', etag: '"c"' });
+    });
+
+    await expect(s3.move('a.txt', 'b.txt', { signal: controller.signal })).resolves.toMatchObject({ key: 'b.txt' });
+    expect(calls.map((c) => `${c.method} ${c.url.pathname}`)).toEqual([
+      'PUT /shop/b.txt',
+      'HEAD /shop/b.txt',
+      'DELETE /shop/a.txt',
+    ]);
+  });
 });
 
 describe('S3Disk requests', () => {

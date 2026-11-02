@@ -32,6 +32,7 @@ import type {
   StorageListPage,
   StorageObjectWrite,
   StorageRange,
+  StorageSignalOptions,
   StorageWriteResult,
 } from '../interfaces/storage-disk.interface.js';
 import { compareKeys, decodeCursor, encodeCursor } from './in-memory.disk.js';
@@ -144,7 +145,7 @@ export class LocalDisk extends StorageDisk {
     }
   }
 
-  protected async copyObject(from: string, to: string): Promise<StorageWriteResult> {
+  protected async copyObject(from: string, to: string, options?: StorageSignalOptions): Promise<StorageWriteResult> {
     const source = await this.openFile(from);
     const tmp = join(this.tmpDir, randomUUID());
 
@@ -154,6 +155,7 @@ export class LocalDisk extends StorageDisk {
 
       // A clone where the file system supports it (APFS, Btrfs, XFS), a copy elsewhere.
       await copyFile(source.path, tmp, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
+      options?.signal?.throwIfAborted();
       const stats = await lstat(tmp);
       const version = this.versionKey(await lstat(tmp, { bigint: true }));
       const target = this.pathOf(this.checkKey(to));
@@ -168,10 +170,15 @@ export class LocalDisk extends StorageDisk {
     }
   }
 
-  protected override async moveObject(from: string, to: string): Promise<StorageWriteResult> {
+  protected override async moveObject(
+    from: string,
+    to: string,
+    options?: StorageSignalOptions,
+  ): Promise<StorageWriteResult> {
     const source = await this.openFile(from);
     const meta = keepContentType(await this.readSidecar(from, source.stats, source.version), from, to);
     await source.handle.close();
+    options?.signal?.throwIfAborted();
 
     const target = this.pathOf(this.checkKey(to));
     // A rename keeps size, mtime and inode, so the version doesn't change.
@@ -336,9 +343,14 @@ export class LocalDisk extends StorageDisk {
     }
   }
 
-  protected async deleteObjects(keys: string[]): Promise<void> {
+  protected async deleteObjects(keys: string[], options?: StorageSignalOptions): Promise<void> {
+    const signal = options?.signal;
     const emptied = new Set<string>();
     for (const key of keys) {
+      // Between keys only: what is deleted stays deleted, and its folders are still pruned
+      if (signal?.aborted) {
+        break;
+      }
       const path = this.pathOf(this.checkKey(key));
       if (!(await this.parentInside(path))) {
         continue;
@@ -361,6 +373,7 @@ export class LocalDisk extends StorageDisk {
     }
 
     await this.prune(emptied);
+    signal?.throwIfAborted();
   }
 
   /**
@@ -385,14 +398,19 @@ export class LocalDisk extends StorageDisk {
    * Every page reads the whole subtree: fine for development and moderate trees, not for
    * millions of files.
    */
-  protected async listObjects(options: { prefix: string; cursor?: string; limit: number }): Promise<StorageListPage> {
+  protected async listObjects(options: {
+    prefix: string;
+    cursor?: string;
+    limit: number;
+    signal?: AbortSignal;
+  }): Promise<StorageListPage> {
     const after = options.cursor === undefined ? undefined : decodeCursor(options.cursor);
     const slash = options.prefix.lastIndexOf('/');
     const base = slash === -1 ? '' : options.prefix.slice(0, slash);
 
     const found: StorageListEntry[] = [];
     if (!isInternalDir(base.split('/', 1)[0]) && (base === '' || (await this.parentInside(this.pathOf(base + '/x'))))) {
-      await this.walk(base, options.prefix, found);
+      await this.walk(base, options.prefix, found, options.signal);
     }
 
     const keys = found
@@ -402,7 +420,13 @@ export class LocalDisk extends StorageDisk {
     return { entries: page, cursor: keys.length > page.length ? encodeCursor(page[page.length - 1].key) : undefined };
   }
 
-  private async walk(dirKey: string, prefix: string, found: StorageListEntry[]): Promise<void> {
+  private async walk(
+    dirKey: string,
+    prefix: string,
+    found: StorageListEntry[],
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    signal?.throwIfAborted();
     let names: string[];
     try {
       names = await readdir(dirKey === '' ? this.realRoot : this.pathOf(dirKey));
@@ -429,7 +453,7 @@ export class LocalDisk extends StorageDisk {
 
       const stats = await lstat(this.pathOf(key)).catch(() => undefined);
       if (stats?.isDirectory()) {
-        await this.walk(key, prefix, found);
+        await this.walk(key, prefix, found, signal);
       } else if (stats?.isFile() && key.startsWith(prefix)) {
         found.push({ key, size: stats.size, lastModified: stats.mtime, etag: etagOf(stats) });
       }
