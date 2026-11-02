@@ -15,6 +15,7 @@ import type {
   StorageListPage,
   StorageObjectWrite,
   StorageRange,
+  StorageSignalOptions,
   StorageSignedUpload,
   StorageSignedUploadRequest,
   StorageWriteResult,
@@ -315,7 +316,7 @@ export class S3Disk extends StorageDisk {
     }
   }
 
-  protected async copyObject(from: string, to: string): Promise<StorageWriteResult> {
+  protected async copyObject(from: string, to: string, options?: StorageSignalOptions): Promise<StorageWriteResult> {
     const source = `/${this.bucket}/${encodeKeyPath(this.prefix + from)}`;
     const res = await this.send({
       operation: 'CopyObject',
@@ -323,18 +324,21 @@ export class S3Disk extends StorageDisk {
       key: this.prefix + to,
       headers: { 'x-amz-copy-source': source, 'x-amz-metadata-directive': 'COPY', ...this.encryptionHeaders },
       notFoundKey: from,
+      signal: options?.signal,
     });
     const result = await res.text();
     throwIfErrorDocument(result, 'CopyObject', res);
 
+    // The copy is made: not abortable from here, so a move goes on to delete the source
     const file = await this.headObject(to);
     return { key: to, size: file.size, contentType: file.contentType, etag: file.etag };
   }
 
-  protected async deleteObjects(keys: string[]): Promise<void> {
+  protected async deleteObjects(keys: string[], options?: StorageSignalOptions): Promise<void> {
+    const signal = options?.signal;
     if (!this.batchDelete || keys.length === 1) {
       for (const key of keys) {
-        await this.send({ operation: 'DeleteObject', method: 'DELETE', key: this.prefix + key });
+        await this.send({ operation: 'DeleteObject', method: 'DELETE', key: this.prefix + key, signal });
       }
       return;
     }
@@ -356,6 +360,7 @@ export class S3Disk extends StorageDisk {
           'content-md5': createHash('md5').update(xml).digest('base64'),
         },
         body: xml,
+        signal,
       });
 
       const result = await res.text();
@@ -374,7 +379,11 @@ export class S3Disk extends StorageDisk {
 
   // --- reads ---------------------------------------------------------------------------
 
-  protected async readObject(key: string, range: StorageRange | undefined): Promise<StorageDownload> {
+  protected async readObject(
+    key: string,
+    range: StorageRange | undefined,
+    options?: StorageSignalOptions,
+  ): Promise<StorageDownload> {
     const headers: Record<string, string> = {};
     if (range) {
       headers.range = 'suffix' in range ? `bytes=-${range.suffix}` : `bytes=${range.start}-${range.end ?? ''}`;
@@ -390,6 +399,7 @@ export class S3Disk extends StorageDisk {
       headers,
       stream: true,
       notFoundKey: key,
+      signal: options?.signal,
     });
     const file = fileFromHeaders(key, res.headers);
     const body = res.body ? Readable.fromWeb(res.body as import('node:stream/web').ReadableStream) : Readable.from([]);
@@ -417,12 +427,23 @@ export class S3Disk extends StorageDisk {
     return { ...file, body };
   }
 
-  protected async headObject(key: string): Promise<StorageFile> {
-    const res = await this.send({ operation: 'HeadObject', method: 'HEAD', key: this.prefix + key, notFoundKey: key });
+  protected async headObject(key: string, options?: StorageSignalOptions): Promise<StorageFile> {
+    const res = await this.send({
+      operation: 'HeadObject',
+      method: 'HEAD',
+      key: this.prefix + key,
+      notFoundKey: key,
+      signal: options?.signal,
+    });
     return fileFromHeaders(key, res.headers);
   }
 
-  protected async listObjects(options: { prefix: string; cursor?: string; limit: number }): Promise<StorageListPage> {
+  protected async listObjects(options: {
+    prefix: string;
+    cursor?: string;
+    limit: number;
+    signal?: AbortSignal;
+  }): Promise<StorageListPage> {
     const query: [string, string][] = [
       ['list-type', '2'],
       ['max-keys', String(options.limit)],
@@ -435,7 +456,7 @@ export class S3Disk extends StorageDisk {
       query.push(['continuation-token', options.cursor]);
     }
 
-    const res = await this.send({ operation: 'ListObjectsV2', method: 'GET', query });
+    const res = await this.send({ operation: 'ListObjectsV2', method: 'GET', query, signal: options.signal });
     const xml = await res.text();
 
     const entries: StorageListEntry[] = [];
@@ -543,6 +564,8 @@ export class S3Disk extends StorageDisk {
     const payloadHash = init.body ? sha256Hex(init.body) : EMPTY_SHA256;
 
     for (let attempt = 1; ; attempt++) {
+      // Before signing, so an aborted call never fetches credentials or reaches the store
+      init.signal?.throwIfAborted();
       let error: unknown;
       try {
         return await this.attempt(init, url, payloadHash);

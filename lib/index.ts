@@ -35,6 +35,7 @@ export type {
   StoragePutOptions,
   StorageRange,
   StorageRetryOptions,
+  StorageSignalOptions,
   StorageSignedUpload,
   StorageSignedUploadRequest,
   StorageSignedUrlClaims,

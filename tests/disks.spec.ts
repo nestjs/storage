@@ -275,6 +275,61 @@ describe.each(disks)('%s', (name, create) => {
     });
   });
 
+  describe('aborted operations', () => {
+    const reason = new Error('client went away');
+    const aborted = () => ({ signal: AbortSignal.abort(reason) });
+
+    it('an already-aborted signal fails each operation with its reason, and changes nothing', async () => {
+      await disk.put('s/a.txt', 'a');
+
+      await expect(disk.get('s/a.txt', aborted())).rejects.toBe(reason);
+      await expect(disk.getBuffer('s/a.txt', aborted())).rejects.toBe(reason);
+      await expect(disk.getText('s/a.txt', aborted())).rejects.toBe(reason);
+      await expect(disk.stat('s/a.txt', aborted())).rejects.toBe(reason);
+      await expect(disk.exists('s/a.txt', aborted())).rejects.toBe(reason);
+      await expect(disk.list({ prefix: 's/', ...aborted() })).rejects.toBe(reason);
+      await expect(
+        disk
+          .listAll({ prefix: 's/', ...aborted() })
+          [Symbol.asyncIterator]()
+          .next(),
+      ).rejects.toBe(reason);
+      await expect(disk.delete('s/a.txt', aborted())).rejects.toBe(reason);
+      await expect(disk.copy('s/a.txt', 's/b.txt', aborted())).rejects.toBe(reason);
+      await expect(disk.move('s/a.txt', 's/c.txt', aborted())).rejects.toBe(reason);
+
+      expect((await disk.list({ prefix: 's/' })).entries.map((e) => e.key)).toEqual(['s/a.txt']);
+    });
+
+    it('a signal that is not aborted changes nothing', async () => {
+      const { signal } = new AbortController();
+      await disk.put('s/a.txt', 'a');
+
+      expect(await disk.getText('s/a.txt')).toBe('a');
+      expect(await disk.exists('s/a.txt', { signal })).toBe(true);
+      expect((await disk.stat('s/a.txt', { signal })).size).toBe(1);
+      await disk.copy('s/a.txt', 's/b.txt', { signal });
+      await disk.move('s/b.txt', 's/c.txt', { signal });
+      expect((await disk.list({ prefix: 's/', signal })).entries.map((e) => e.key)).toEqual(['s/a.txt', 's/c.txt']);
+      await disk.delete(['s/a.txt', 's/c.txt'], { signal });
+      expect(await disk.exists('s/a.txt', { signal })).toBe(false);
+    });
+
+    it('aborting a download ends its body with the reason', async () => {
+      await disk.put('s/big.bin', Buffer.alloc(4 * 1024 * 1024, 1));
+      const controller = new AbortController();
+      const download = await disk.get('s/big.bin', { signal: controller.signal });
+
+      controller.abort(reason);
+      const read = async () => {
+        for await (const _chunk of download.body) {
+          // drain
+        }
+      };
+      await expect(read()).rejects.toBe(reason);
+    });
+  });
+
   describe('ranges (S3 semantics)', () => {
     beforeEach(() => disk.put('r.bin', Buffer.from('0123456789')));
 

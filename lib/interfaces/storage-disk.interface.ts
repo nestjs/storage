@@ -42,7 +42,18 @@ export interface StorageDownload extends StorageFile {
   range?: { start: number; end: number };
 }
 
-export interface StoragePutOptions {
+/** Accepted by every disk operation that does I/O. */
+export interface StorageSignalOptions {
+  /**
+   * Aborts the operation: it rejects with the signal's reason, and S3 stops retrying. A
+   * multi-key `delete()` stops between keys. `copy()` and `move()` stop only before they change
+   * anything: once a move's copy is made, the source is still deleted. An abort while S3 is still
+   * answering the copy can leave a moved file at both keys, as any other failure at that point.
+   */
+  signal?: AbortSignal;
+}
+
+export interface StoragePutOptions extends StorageSignalOptions {
   /** Default: from the key's extension (a small built-in table), else `application/octet-stream`. */
   contentType?: string;
   /** Stored and sent back as `Cache-Control` by `serveFile()`, by S3 and by CDNs in front of it. */
@@ -60,11 +71,11 @@ export interface StoragePutOptions {
   signal?: AbortSignal;
 }
 
-export interface StorageGetOptions {
+export interface StorageGetOptions extends StorageSignalOptions {
   range?: StorageRange;
 }
 
-export interface StorageListOptions {
+export interface StorageListOptions extends StorageSignalOptions {
   /** Only keys that start with this string (not necessarily at a `/`). */
   prefix?: string;
   /** The `cursor` of the previous page. */
