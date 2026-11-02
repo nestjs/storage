@@ -22,7 +22,8 @@ const INLINE_SAFE =
  * `Cache-Control` (the stored one, else `private`), `X-Content-Type-Options: nosniff` and
  * `Accept-Ranges: bytes`. With `req`, a single `Range` gets a 206 and `If-None-Match` a 304.
  * A missing file is a `NotFoundException`, a range past the end a 416. A client that
- * disconnects mid-way releases the file (Express pipes a stream without doing that).
+ * disconnects before the file is open cancels the request to the store; one that disconnects
+ * mid-way releases the file (Express pipes a stream without doing that).
  *
  * ```ts
  * @Get(':id/invoice')
@@ -62,22 +63,27 @@ async function respond(
   const { req, res } = options;
   assertResponse(res); // before any I/O, so a wrong `res` never leaves a file open
 
+  // A client that goes away before the file is open cancels the request to the store. After,
+  // Express pipes the stream into the response and leaves it open when the client goes away
+  // mid-download; destroying it releases the file handle or the connection to the store.
+  const opening = new AbortController();
+  let download: StorageDownload | undefined;
+  onResponseClose(res, () =>
+    download ? download.body.destroy() : opening.abort(new HttpException('Client Closed Request', 499)),
+  );
+
   const headers = requestHeaders(req);
   let range = parseRange(headers.range);
-  let download: StorageDownload;
+  const { signal } = opening;
   try {
     // If-Range: the range only applies to the version the client already has (RFC 9110 §13.1.5).
-    if (range && headers['if-range'] !== undefined && headers['if-range'] !== (await disk.stat(key)).etag) {
+    if (range && headers['if-range'] !== undefined && headers['if-range'] !== (await disk.stat(key, { signal })).etag) {
       range = undefined;
     }
-    download = await disk.get(key, range ? { range } : {});
+    download = await disk.get(key, range ? { range, signal } : { signal });
   } catch (error) {
     throw toHttpError(error, res);
   }
-
-  // Express pipes the stream into the response and leaves it open when the client goes away
-  // mid-download; destroying it releases the file handle or the connection to the store.
-  onResponseClose(res, () => download.body.destroy());
 
   const etag = download.etag;
   if (etag && headers['if-none-match'] !== undefined && matchesEtag(headers['if-none-match'], etag)) {
@@ -205,6 +211,7 @@ interface ResponseLike {
   /** Fastify's reply wraps the Node response. */
   raw?: unknown;
   once?: (event: string, listener: () => void) => unknown;
+  destroyed?: boolean;
 }
 
 function isFastifyReply(r: ResponseLike): boolean {
@@ -234,7 +241,10 @@ export function setHeader(res: unknown, name: string, value: string): void {
 function onResponseClose(res: unknown, listener: () => void): void {
   const r = res as ResponseLike;
   const raw = (isFastifyReply(r) ? r.raw : r) as ResponseLike | undefined;
-  if (typeof raw?.once === 'function') {
+  if (raw?.destroyed) {
+    // The client left before this was called: its 'close' has already been emitted
+    listener();
+  } else if (typeof raw?.once === 'function') {
     raw.once('close', listener);
   }
 }

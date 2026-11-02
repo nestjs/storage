@@ -379,6 +379,38 @@ describe.each(adapters.map((a) => a.name))('on %s', (adapter) => {
       }
     });
 
+    it('cancels the read when the client disconnects before the file is open', async () => {
+      let called!: () => void;
+      const calling = new Promise<void>((resolve) => (called = resolve));
+      let signal: AbortSignal | undefined;
+      const spy = vi.spyOn(photos, 'get').mockImplementation((_key, options) => {
+        signal = options?.signal;
+        called();
+        // A store that never answers, until the read is aborted
+        return new Promise((_resolve, reject) =>
+          signal?.addEventListener('abort', () => reject(signal!.reason), { once: true }),
+        );
+      });
+
+      try {
+        const port = (app.getHttpServer().address() as { port: number }).port;
+        const req = httpRequest(`http://127.0.0.1:${port}/photos?key=site%2Fphoto.png`);
+        req.on('error', () => undefined);
+        req.end();
+        await calling;
+        req.destroy();
+
+        for (let i = 0; i < 100 && !signal?.aborted; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+
+        expect(signal?.aborted).toBe(true);
+        expect(signal?.reason).toMatchObject({ status: 499 });
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
     it('names downloads safely', async () => {
       const res = await http().get('/download').query({ key: 'invoices/INV-1.pdf' }).expect(200);
       expect(res.headers['content-disposition']).toBe(
