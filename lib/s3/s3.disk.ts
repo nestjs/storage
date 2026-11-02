@@ -241,19 +241,18 @@ export class S3Disk extends StorageDisk {
         headers: { 'content-length': String(data.length) },
         body: data,
         signal: file.signal,
-      }).then(
-        (res) => {
+      })
+        .then((res) => {
           const etag = res.headers.get('etag');
           if (!etag) {
             throw new StorageServiceError({ operation: 'UploadPart', code: 'InvalidResponse', message: 'no ETag' });
           }
           etags[number - 1] = etag;
-        },
-        (error) => {
+        })
+        .catch((error: unknown) => {
           failure ??= { error };
           failed();
-        },
-      );
+        });
 
       const tracked = task.finally(() => inFlight.delete(tracked));
       inFlight.add(tracked);
