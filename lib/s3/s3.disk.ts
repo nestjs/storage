@@ -217,6 +217,9 @@ export class S3Disk extends StorageDisk {
     const etags: string[] = [];
     const inFlight = new Set<Promise<void>>();
     let failure: { error: unknown } | undefined;
+    // Settles on the first failed part, so a read waiting on a stalled body doesn't hold it up
+    let failed!: () => void;
+    const failing = new Promise<undefined>((resolve) => (failed = () => resolve(undefined)));
     let size = 0;
     let partNumber = 0;
     const upload = (data: Buffer) => {
@@ -239,18 +242,18 @@ export class S3Disk extends StorageDisk {
         headers: { 'content-length': String(data.length) },
         body: data,
         signal: file.signal,
-      }).then(
-        (res) => {
+      })
+        .then((res) => {
           const etag = res.headers.get('etag');
           if (!etag) {
             throw new StorageServiceError({ operation: 'UploadPart', code: 'InvalidResponse', message: 'no ETag' });
           }
           etags[number - 1] = etag;
-        },
-        (error) => {
+        })
+        .catch((error: unknown) => {
           failure ??= { error };
-        },
-      );
+          failed();
+        });
 
       const tracked = task.finally(() => inFlight.delete(tracked));
       inFlight.add(tracked);
@@ -265,7 +268,10 @@ export class S3Disk extends StorageDisk {
           throw failure.error;
         }
 
-        const data = firstParts.shift() ?? (await parts.next());
+        const data = firstParts.shift() ?? (await Promise.race([parts.next(), failing]));
+        if (failure) {
+          throw (failure as { error: unknown }).error;
+        }
         if (!data) {
           break;
         }
@@ -679,6 +685,7 @@ class PartReader {
   private buffered: Buffer[] = [];
   private length = 0;
   private done = false;
+  private reading = false;
 
   constructor(
     private readonly source: AsyncIterator<Buffer>,
@@ -687,7 +694,8 @@ class PartReader {
 
   async next(): Promise<Buffer | undefined> {
     while (!this.done && this.length < this.size) {
-      const { value, done } = await this.source.next();
+      this.reading = true;
+      const { value, done } = await this.source.next().finally(() => (this.reading = false));
       if (done) {
         this.done = true;
       } else if (value.length > 0) {
@@ -714,7 +722,11 @@ class PartReader {
   async release(): Promise<void> {
     if (!this.done) {
       this.done = true;
-      await this.source.return?.().catch(() => undefined);
+      const returned = this.source.return?.().catch(() => undefined);
+      // return() queues behind a read still waiting on the source, which may never come
+      if (!this.reading) {
+        await returned;
+      }
     }
   }
 }
