@@ -154,13 +154,13 @@ export abstract class StorageDisk {
     return download;
   }
 
-  async getBuffer(key: string): Promise<Buffer> {
-    const { body } = await this.get(key);
+  async getBuffer(key: string, options: StorageSignalOptions = {}): Promise<Buffer> {
+    const { body } = await this.get(key, { signal: options.signal });
     return readAll(body);
   }
 
-  async getText(key: string): Promise<string> {
-    return (await this.getBuffer(key)).toString('utf8');
+  async getText(key: string, options: StorageSignalOptions = {}): Promise<string> {
+    return (await this.getBuffer(key, options)).toString('utf8');
   }
 
   async exists(key: string, options: StorageSignalOptions = {}): Promise<boolean> {
