@@ -177,6 +177,42 @@ describe('S3Disk', () => {
       expect(fake.uploads.size).toBe(0);
     });
 
+    it('aborts when a part fails while the body is stalled, without waiting for more of it', async () => {
+      const disk = s3({ multipart: { partSize: 5 * MiB, concurrency: 4 }, retry: false });
+      fake.fail((r) => r.query.partNumber === '1', { status: 500, code: 'InternalError', times: 1 });
+      const stalled = async function* () {
+        yield bytes(5 * MiB);
+        yield bytes(5 * MiB);
+        await new Promise(() => undefined);
+      };
+
+      const error = await disk.put('big/stalled.bin', stalled()).catch((e) => e);
+
+      expect(error).toMatchObject({ operation: 'UploadPart', code: 'InternalError', upstreamStatus: 500 });
+      expect(ops().at(-1)).toBe('DELETE big/stalled.bin?uploadId');
+      expect(fake.uploads.size).toBe(0);
+    });
+
+    it('uploads no part read after another one failed', async () => {
+      const disk = s3({ multipart: { partSize: 5 * MiB, concurrency: 4 }, retry: false });
+      fake.fail((r) => r.query.partNumber === '1', { status: 500, code: 'InternalError', times: 1 });
+      let resume!: () => void;
+      const gate = new Promise<void>((resolve) => (resume = resolve));
+      const body = async function* () {
+        yield bytes(5 * MiB);
+        yield bytes(5 * MiB);
+        await gate;
+        yield bytes(5 * MiB);
+      };
+
+      const error = await disk.put('big/late.bin', body()).catch((e) => e);
+      resume();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(error).toMatchObject({ code: 'InternalError' });
+      expect(fake.requests.filter((r) => r.query.partNumber).map((r) => r.query.partNumber)).not.toContain('3');
+    });
+
     it('treats a CompleteMultipartUpload that answers 200 with an <Error> as a failure', async () => {
       const disk = s3({ multipart: { partSize: 5 * MiB }, retry: false });
       fake.fail(() => false, { status: 0, code: 'CompleteError', times: 1 });
