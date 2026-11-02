@@ -211,6 +211,7 @@ interface ResponseLike {
   /** Fastify's reply wraps the Node response. */
   raw?: unknown;
   once?: (event: string, listener: () => void) => unknown;
+  destroyed?: boolean;
 }
 
 function isFastifyReply(r: ResponseLike): boolean {
@@ -240,7 +241,10 @@ export function setHeader(res: unknown, name: string, value: string): void {
 function onResponseClose(res: unknown, listener: () => void): void {
   const r = res as ResponseLike;
   const raw = (isFastifyReply(r) ? r.raw : r) as ResponseLike | undefined;
-  if (typeof raw?.once === 'function') {
+  if (raw?.destroyed) {
+    // The client left before this was called: its 'close' has already been emitted
+    listener();
+  } else if (typeof raw?.once === 'function') {
     raw.once('close', listener);
   }
 }

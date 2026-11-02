@@ -75,6 +75,18 @@ describe.each([
     await disk.put('notes/a.txt', 'hello');
   });
 
+  it('reads nothing for a client that left before it was called', async () => {
+    const res = response();
+    Object.assign(res instanceof FastifyReply ? res.raw : res, { destroyed: true });
+    const get = vi.spyOn(disk, 'get');
+
+    const error = await errorOf(serveFile(disk, 'notes/a.txt', { res }));
+
+    expect(error).toBeInstanceOf(HttpException);
+    expect((error as HttpException).getStatus()).toBe(499);
+    expect(get.mock.calls[0][1]?.signal?.aborted).toBe(true);
+  });
+
   it('an explicit cacheControl wins over the stored one', async () => {
     const res = response();
     await serveFile(disk, 'docs/report.pdf', { res, cacheControl: 'no-store' });
