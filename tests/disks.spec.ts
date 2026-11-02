@@ -283,6 +283,8 @@ describe.each(disks)('%s', (name, create) => {
       await disk.put('s/a.txt', 'a');
 
       await expect(disk.get('s/a.txt', aborted())).rejects.toBe(reason);
+      await expect(disk.getBuffer('s/a.txt', aborted())).rejects.toBe(reason);
+      await expect(disk.getText('s/a.txt', aborted())).rejects.toBe(reason);
       await expect(disk.stat('s/a.txt', aborted())).rejects.toBe(reason);
       await expect(disk.exists('s/a.txt', aborted())).rejects.toBe(reason);
       await expect(disk.list({ prefix: 's/', ...aborted() })).rejects.toBe(reason);

@@ -14,16 +14,18 @@ import {
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { open, rename, type FileHandle } from 'node:fs/promises';
+import { open, rename, unlink, type FileHandle } from 'node:fs/promises';
 import { LocalDisk, StorageFileNotFoundError, StorageInvalidKeyError, StorageKeyConflictError } from '../lib/index.js';
 import { StorageError } from '../lib/errors/storage.error.js';
 
-// Passes through, so a test can run something between a write's ensureParent() and its rename
+// Passes through, so a test can run something between a write's ensureParent() and its rename,
+// or after a delete's unlink
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...actual, rename: vi.fn(actual.rename) };
+  return { ...actual, rename: vi.fn(actual.rename), unlink: vi.fn(actual.unlink) };
 });
-const realRename = (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).rename;
+const { rename: realRename, unlink: realUnlink } =
+  await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
 
 const made: string[] = [];
 const tempDir = (label: string) => {
@@ -488,6 +490,46 @@ describe('LocalDisk', () => {
 
       expect(await disk.getText('doc.bin')).toBe('one');
       expect((await disk.stat('doc.bin')).metadata).toEqual({ v: '1' });
+    });
+  });
+
+  describe('a delete aborted while it runs', () => {
+    const reason = new Error('shutting down');
+    // Aborts once the n-th file is unlinked
+    const abortAfterUnlink = (n: number) => {
+      const controller = new AbortController();
+      let unlinked = 0;
+      vi.mocked(unlink).mockImplementation(async (path) => {
+        await realUnlink(path);
+        if (++unlinked === n) {
+          controller.abort(reason);
+        }
+      });
+      return controller.signal;
+    };
+    afterEach(() => vi.mocked(unlink).mockImplementation(realUnlink));
+
+    it('stops between keys, keeps what it deleted and prunes its folders', async () => {
+      await disk.put('d/a/1.txt', '1');
+      await disk.put('d/b/2.txt', '2');
+      await disk.put('d/c/3.txt', '3');
+
+      const signal = abortAfterUnlink(1);
+      await expect(disk.delete(['d/a/1.txt', 'd/b/2.txt', 'd/c/3.txt'], { signal })).rejects.toBe(reason);
+
+      expect((await disk.list({ prefix: 'd/' })).entries.map((e) => e.key)).toEqual(['d/b/2.txt', 'd/c/3.txt']);
+      expect(existsSync(join(root, 'd', 'a'))).toBe(false);
+    });
+
+    it('completes when the abort comes after the last key', async () => {
+      await disk.put('d/1.txt', '1');
+      await disk.put('d/2.txt', '2');
+
+      const signal = abortAfterUnlink(2);
+      await expect(disk.delete(['d/1.txt', 'd/2.txt'], { signal })).resolves.toBeUndefined();
+
+      expect(signal.aborted).toBe(true);
+      expect((await disk.list({ prefix: 'd/' })).entries).toEqual([]);
     });
   });
 

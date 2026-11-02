@@ -346,9 +346,11 @@ export class LocalDisk extends StorageDisk {
   protected async deleteObjects(keys: string[], options?: StorageSignalOptions): Promise<void> {
     const signal = options?.signal;
     const emptied = new Set<string>();
+    let stopped = false;
     for (const key of keys) {
       // Between keys only: what is deleted stays deleted, and its folders are still pruned
       if (signal?.aborted) {
+        stopped = true;
         break;
       }
       const path = this.pathOf(this.checkKey(key));
@@ -373,7 +375,10 @@ export class LocalDisk extends StorageDisk {
     }
 
     await this.prune(emptied);
-    signal?.throwIfAborted();
+    // An abort that came after the last key stopped nothing
+    if (stopped) {
+      signal?.throwIfAborted();
+    }
   }
 
   /**
