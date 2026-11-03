@@ -19,6 +19,7 @@ import {
 } from '@nestjs/common';
 import * as express from '@nestjs/platform-express';
 import * as fastify from '@nestjs/platform-fastify/multipart';
+import * as node from '@nestjs/platform-node';
 import request from 'supertest';
 import { type AdapterName, adapters, createApp } from './support/adapters.js';
 import { InMemoryDisk, StorageModule, type StoredUpload, uploadToDisk } from '../lib/index.js';
@@ -27,7 +28,7 @@ interface UploadApi {
   FileInterceptor(field: string, options?: any): Type<NestInterceptor>;
   FilesInterceptor(field: string, maxCount?: number, options?: any): Type<NestInterceptor>;
 }
-const apis: Record<AdapterName, UploadApi> = { express, fastify };
+const apis: Record<AdapterName, UploadApi> = { express, fastify, node };
 
 const PDF = Buffer.from('%PDF-1.7\n% upload\n');
 const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(32, 1)]);

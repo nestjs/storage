@@ -1,11 +1,13 @@
 import type { INestApplication, Type } from '@nestjs/common';
 import { ExpressAdapter } from '@nestjs/platform-express';
 import { FastifyAdapter } from '@nestjs/platform-fastify';
+import { NodeAdapter } from '@nestjs/platform-node';
 import { Test, type TestingModuleBuilder } from '@nestjs/testing';
 
 export const adapters = [
   { name: 'express', create: () => new ExpressAdapter() },
   { name: 'fastify', create: () => new FastifyAdapter() },
+  { name: 'node', create: () => new NodeAdapter() },
 ] as const;
 
 export type AdapterName = (typeof adapters)[number]['name'];
