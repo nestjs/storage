@@ -32,6 +32,7 @@ import {
 } from '@nestjs/common';
 import * as express from '@nestjs/platform-express';
 import * as fastify from '@nestjs/platform-fastify/multipart';
+import * as node from '@nestjs/platform-node';
 import { type AdapterName, createApp } from './support/adapters.js';
 import {
   detectContentType,
@@ -138,7 +139,7 @@ interface UploadApi {
   FileInterceptor(field: string, options?: any): Type<NestInterceptor>;
   FilesInterceptor(field: string, maxCount?: number, options?: any): Type<NestInterceptor>;
 }
-export const uploadApis: Record<AdapterName, UploadApi> = { express, fastify };
+export const uploadApis: Record<AdapterName, UploadApi> = { express, fastify, node };
 
 /** A storage error with a status becomes that status; anything else reaches Nest as it is. */
 function asHttp(error: unknown): never {

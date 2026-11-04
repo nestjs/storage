@@ -29,6 +29,7 @@ import * as express from '@nestjs/platform-express';
 import request from 'supertest';
 import { type AdapterName, adapters, createApp } from './support/adapters.js';
 import * as fastify from '@nestjs/platform-fastify/multipart';
+import * as node from '@nestjs/platform-node';
 import {
   InjectDisk,
   InMemoryDisk,
@@ -46,7 +47,7 @@ interface UploadApi {
   FileInterceptor(field: string, options?: any): Type<NestInterceptor>;
   FilesInterceptor(field: string, maxCount?: number, options?: any): Type<NestInterceptor>;
 }
-const apis: Record<AdapterName, UploadApi> = { express, fastify };
+const apis: Record<AdapterName, UploadApi> = { express, fastify, node };
 
 const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',

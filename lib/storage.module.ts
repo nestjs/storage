@@ -38,7 +38,7 @@ const warnedDisks = new WeakSet<object>();
  */
 @Module({})
 export class StorageModule extends ConfigurableModuleClass implements OnModuleInit, OnApplicationShutdown {
-  private server?: object;
+  private readonly servers: object[] = [];
 
   constructor(
     @Inject(STORAGE_DISKS) private readonly resolved: ResolvedDisks,
@@ -84,16 +84,18 @@ export class StorageModule extends ConfigurableModuleClass implements OnModuleIn
     }
 
     // Lets upload engines, created in decorators, find this application's disks per request.
-    const instance = this.adapterHost?.httpAdapter?.getInstance?.();
-    if (instance && (typeof instance === 'object' || typeof instance === 'function')) {
-      this.server = instance;
-      registerServer(instance, this.storage);
+    const adapter = this.adapterHost?.httpAdapter;
+    for (const server of [adapter?.getInstance?.(), adapter?.getHttpServer?.()]) {
+      if (server && (typeof server === 'object' || typeof server === 'function')) {
+        this.servers.push(server);
+        registerServer(server, this.storage);
+      }
     }
   }
 
   async onApplicationShutdown() {
-    if (this.server) {
-      unregisterServer(this.server, this.storage);
+    for (const server of this.servers) {
+      unregisterServer(server, this.storage);
     }
     const disks = new Set(this.resolved.disks.values());
     await Promise.allSettled([...disks].map((disk) => disk.close?.()));
