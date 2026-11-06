@@ -1,7 +1,20 @@
 {
   "name": "@nestjs/storage",
   "version": "0.0.4",
-  "description": "Nest - modern, fast, powerful node.js web framework (@storage)",
+  "description": "File storage for NestJS: one API for local disks, Amazon S3 and S3-compatible stores such as Cloudflare R2, with streamed uploads and signed URLs.",
+  "keywords": [
+    "nestjs",
+    "nest",
+    "file-storage",
+    "storage",
+    "file-upload",
+    "s3",
+    "aws-s3",
+    "cloudflare-r2",
+    "minio",
+    "signed-url",
+    "presigned-url"
+  ],
   "author": "Kamil Mysliwiec",
   "license": "MIT",
   "url": "https://github.com/nestjs/storage#readme",
