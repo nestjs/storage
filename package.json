@@ -1,6 +1,6 @@
 {
   "name": "@nestjs/storage",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "File storage for NestJS: one API for local disks, Amazon S3 and S3-compatible stores such as Cloudflare R2, with streamed uploads and signed URLs.",
   "keywords": [
     "nestjs",
