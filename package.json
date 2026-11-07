@@ -57,7 +57,7 @@
     "@nestjs/platform-fastify": "12.4.0",
     "@nestjs/platform-node": "12.4.0",
     "@nestjs/testing": "12.4.0",
-    "@types/node": "24.19.2",
+    "@types/node": "26.6.6",
     "@types/supertest": "7.2.1",
     "husky": "9.1.7",
     "lint-staged": "17.6.0",
