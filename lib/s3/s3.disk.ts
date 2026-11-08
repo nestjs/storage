@@ -338,7 +338,18 @@ export class S3Disk extends StorageDisk {
     const signal = options?.signal;
     if (!this.batchDelete || keys.length === 1) {
       for (const key of keys) {
-        await this.send({ operation: 'DeleteObject', method: 'DELETE', key: this.prefix + key, signal });
+        // S3 answers 204 for a missing key; Google Cloud Storage answers 404 NoSuchKey
+        await this.send({
+          operation: 'DeleteObject',
+          method: 'DELETE',
+          key: this.prefix + key,
+          notFoundKey: key,
+          signal,
+        }).catch((error: unknown) => {
+          if (!(error instanceof StorageFileNotFoundError)) {
+            throw error;
+          }
+        });
       }
       return;
     }

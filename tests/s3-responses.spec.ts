@@ -411,6 +411,16 @@ describe('S3Disk requests', () => {
     expect(calls.map((c) => `${c.method} ${c.url.pathname}${c.url.search}`)).toEqual(['DELETE /shop/only.txt']);
   });
 
+  it('a DeleteObject that answers 404 NoSuchKey (Google Cloud Storage) is not an error', async () => {
+    const { disk: s3, calls } = disk(() => s3Error(404, 'NoSuchKey'), { batchDelete: false });
+    await expect(s3.delete('gone.txt')).resolves.toBeUndefined();
+    await expect(s3.delete(['a.txt', 'b.txt'])).resolves.toBeUndefined();
+    expect(calls).toHaveLength(3);
+
+    const noBucket = disk(() => s3Error(404, 'NoSuchBucket'));
+    await expect(noBucket.disk.delete('a.txt')).rejects.toMatchObject({ code: 'NoSuchBucket' });
+  });
+
   it('deletes several keys in one quiet DeleteObjects with escaped, prefixed keys and a matching Content-MD5', async () => {
     const { disk: s3, calls } = disk(() => xml('<DeleteResult></DeleteResult>'), { prefix: 'p/' });
     await s3.delete(['a&b.txt', '<c>.txt']);
