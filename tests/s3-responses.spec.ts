@@ -179,6 +179,47 @@ describe('S3Disk retries by error code', () => {
     },
   );
 
+  it('retries a copy that answers 200 with a retryable error document', async () => {
+    const { disk: s3, calls } = disk(
+      (call, index) =>
+        call.method === 'HEAD'
+          ? ok({ 'content-length': '1', 'content-type': 'text/plain', etag: '"c"' })
+          : index === 0
+            ? xml('<Error><Code>InternalError</Code><Message>Try again</Message></Error>')
+            : xml('<CopyObjectResult><ETag>"c"</ETag></CopyObjectResult>'),
+      { retry },
+    );
+
+    await expect(s3.copy('a.txt', 'b.txt')).resolves.toMatchObject({ key: 'b.txt', etag: '"c"' });
+    expect(calls.map((c) => `${c.method} ${c.url.pathname}`)).toEqual([
+      'PUT /shop/b.txt',
+      'PUT /shop/b.txt',
+      'HEAD /shop/b.txt',
+    ]);
+  });
+
+  it('retries a CompleteMultipartUpload that answers 200 with a retryable error document', async () => {
+    let completes = 0;
+    const { disk: s3, calls } = disk(
+      (call) => {
+        if (call.url.searchParams.has('uploads')) {
+          return xml('<InitiateMultipartUploadResult><UploadId>up-1</UploadId></InitiateMultipartUploadResult>');
+        }
+        if (call.url.searchParams.has('partNumber')) {
+          return ok({ etag: `"etag-${call.url.searchParams.get('partNumber')}"` });
+        }
+        return ++completes === 1
+          ? xml('<Error><Code>InternalError</Code><Message>Try again</Message></Error>')
+          : xml('<CompleteMultipartUploadResult><ETag>"final"</ETag></CompleteMultipartUploadResult>');
+      },
+      { retry, multipart: { partSize: 5 * MiB } },
+    );
+
+    await expect(s3.put('big.bin', Buffer.alloc(11 * MiB))).resolves.toMatchObject({ etag: '"final"' });
+    expect(completes).toBe(2);
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
+  });
+
   it.each([
     [400, 'BadDigest'],
     [403, 'SignatureDoesNotMatch'],
