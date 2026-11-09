@@ -48,6 +48,8 @@ interface RequestInit {
   stream?: boolean;
   /** The disk key to name in a `StorageFileNotFoundError` for a 404. */
   notFoundKey?: string;
+  /** S3 may answer 200 and still report an error in the body: checked before a retry is decided. */
+  errorInBody?: boolean;
   signal?: AbortSignal;
 }
 
@@ -296,12 +298,11 @@ export class S3Disk extends StorageDisk {
         query: [['uploadId', uploadId]],
         headers: { 'content-type': 'application/xml' },
         body: Buffer.from(xml),
+        errorInBody: true,
         signal: file.signal,
       });
 
-      // S3 answers 200 and may still report an error in the body.
       const result = await res.text();
-      throwIfErrorDocument(result, 'CompleteMultipartUpload', res);
 
       return { key, size, contentType: file.contentType, etag: xmlText(result, 'ETag') };
     } catch (error) {
@@ -318,16 +319,15 @@ export class S3Disk extends StorageDisk {
 
   protected async copyObject(from: string, to: string, options?: StorageSignalOptions): Promise<StorageWriteResult> {
     const source = `/${this.bucket}/${encodeKeyPath(this.prefix + from)}`;
-    const res = await this.send({
+    await this.send({
       operation: 'CopyObject',
       method: 'PUT',
       key: this.prefix + to,
       headers: { 'x-amz-copy-source': source, 'x-amz-metadata-directive': 'COPY', ...this.encryptionHeaders },
       notFoundKey: from,
+      errorInBody: true,
       signal: options?.signal,
     });
-    const result = await res.text();
-    throwIfErrorDocument(result, 'CopyObject', res);
 
     // The copy is made: not abortable from here, so a move goes on to delete the source
     const file = await this.headObject(to);
@@ -621,6 +621,9 @@ export class S3Disk extends StorageDisk {
           const data = await res.arrayBuffer().catch((error) => {
             throw this.transportError(init, error);
           });
+          if (init.errorInBody) {
+            throwIfErrorDocument(Buffer.from(data).toString('utf8'), init.operation, res);
+          }
           return new Response(res.status === 204 ? null : data, { status: res.status, headers: res.headers });
         }
         return res;
