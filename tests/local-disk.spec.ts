@@ -552,6 +552,13 @@ describe('LocalDisk', () => {
       await expect(disk.get(key)).rejects.toBeInstanceOf(StorageInvalidKeyError);
     });
 
+    it('deleting a key with a segment longer than the file system allows is an invalid key', async () => {
+      const key = 'x'.repeat(300);
+      await disk.put('kept', 'x');
+      await expect(disk.delete(key)).rejects.toBeInstanceOf(StorageInvalidKeyError);
+      await expect(disk.delete(['kept', key])).rejects.toBeInstanceOf(StorageInvalidKeyError);
+    });
+
     it.runIf(process.platform === 'darwin')(
       'keys that differ only in case are one file on a case-insensitive file system',
       async () => {
