@@ -366,6 +366,9 @@ export class LocalDisk extends StorageDisk {
           emptied.add(dirname(path));
         }
       } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code === 'ENAMETOOLONG') {
+          throw tooLong();
+        }
         if (!isMissing(error)) {
           throw error;
         }
