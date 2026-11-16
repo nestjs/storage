@@ -50,7 +50,7 @@
   "devDependencies": {
     "@commitlint/cli": "21.2.4",
     "@commitlint/config-angular": "21.2.4",
-    "@fastify/multipart": "10.1.8",
+    "@fastify/multipart": "10.1.9",
     "@nestjs/common": "12.5.0",
     "@nestjs/core": "12.5.0",
     "@nestjs/platform-express": "12.5.0",
