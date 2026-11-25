@@ -153,6 +153,14 @@ describe.each(disks)('%s', (name, create) => {
       expect((await disk.stat('a/data.json')).contentType).toBe('application/vnd.example+json');
     });
 
+    it('infers no content type from an extension named after an Object.prototype property', async () => {
+      await disk.put('a/notes.constructor', 'x');
+      await disk.put('a/notes.__proto__', 'x');
+
+      expect((await disk.stat('a/notes.constructor')).contentType).toBe('application/octet-stream');
+      expect((await disk.stat('a/notes.__proto__')).contentType).toBe('application/octet-stream');
+    });
+
     it('stores an empty file', async () => {
       await disk.put('empty.txt', '');
       expect(await disk.getBuffer('empty.txt')).toEqual(Buffer.alloc(0));
