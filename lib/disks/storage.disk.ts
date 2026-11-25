@@ -368,7 +368,7 @@ function normalizeMetadata(metadata: Record<string, string> | undefined): Record
       throw new TypeError(`put(): metadata "${name}" must be a string of printable ASCII characters`);
     }
     const lower = name.toLowerCase();
-    if (lower in result) {
+    if (Object.hasOwn(result, lower)) {
       throw new TypeError(`put(): metadata "${name}" is set twice (names are case-insensitive)`);
     }
     result[lower] = value;

@@ -159,6 +159,12 @@ describe.each(disks)('%s', (name, create) => {
       expect((await disk.stat('empty.txt')).size).toBe(0);
     });
 
+    it('keeps metadata named after an Object.prototype property', async () => {
+      await disk.put('a.txt', 'x', { metadata: { constructor: 'c1', toString: 't1' } });
+
+      expect((await disk.stat('a.txt')).metadata).toEqual({ constructor: 'c1', tostring: 't1' });
+    });
+
     it('replaces a file, metadata included', async () => {
       await disk.put('x.txt', 'one', { metadata: { v: '1' }, cacheControl: 'no-store' });
       await disk.put('x.txt', 'two');
