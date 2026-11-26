@@ -1,5 +1,6 @@
 import { detectContentType, InMemoryDisk, StorageSignedUrlError } from '../lib/index.js';
 import { contentDisposition } from '../lib/disks/storage.disk.js';
+import { extensionForContentType } from '../lib/utils/content-type.util.js';
 import { decodeXml, xmlElements, xmlText } from '../lib/s3/xml.util.js';
 
 describe('detectContentType()', () => {
@@ -21,6 +22,17 @@ describe('detectContentType()', () => {
     [Buffer.from([0xff, 0xd8]), undefined],
   ])('%#', (bytes, type) => {
     expect(detectContentType(bytes)).toBe(type);
+  });
+});
+
+describe('extensionForContentType()', () => {
+  it.each([
+    ['text/csv; charset=utf-8', '.csv'],
+    ['constructor', ''],
+    ['__proto__', ''],
+    [undefined, ''],
+  ])('%j', (type, extension) => {
+    expect(extensionForContentType(type)).toBe(extension);
   });
 });
 
