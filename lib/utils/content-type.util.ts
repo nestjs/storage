@@ -81,7 +81,11 @@ export function contentTypeEssence(type: string): string {
 
 /** The usual extension for a content type (`.csv` for `text/csv; charset=utf-8`), or `''`. */
 export function extensionForContentType(type: string | undefined): string {
-  return type === undefined ? '' : (EXTENSION_BY_ESSENCE[contentTypeEssence(type)] ?? '');
+  if (type === undefined) {
+    return '';
+  }
+  const essence = contentTypeEssence(type);
+  return Object.hasOwn(EXTENSION_BY_ESSENCE, essence) ? EXTENSION_BY_ESSENCE[essence] : '';
 }
 
 /** How many leading bytes `detectContentType()` needs to recognize every format it knows. */
