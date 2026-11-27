@@ -127,7 +127,7 @@ export interface StorageSignedUpload {
 }
 
 /**
- * What `createMultipartUpload()` takes. Applied to the file when the upload completes, as
+ * What `S3Disk.createMultipartUpload()` takes. Applied to the file when the upload completes, as
  * `put()` applies its options.
  */
 export interface StorageMultipartUploadOptions extends StorageSignalOptions {
@@ -146,7 +146,7 @@ export interface StorageMultipartUpload {
 }
 
 export interface StorageSignedPartRequest {
-  /** The part must be exactly this many bytes. */
+  /** The part must be exactly this many bytes. Without it, the part's size isn't limited. */
   contentLength?: number;
   /** Default 15 minutes; at most 7 days. */
   expiresIn?: Duration;
@@ -156,6 +156,11 @@ export interface StorageSignedPartRequest {
 export interface StorageUploadedPart {
   partNumber: number;
   etag: string;
+}
+
+/** A part `S3Disk.listUploadedParts()` found: what `completeMultipartUpload()` needs, and its size. */
+export interface StorageListedPart extends StorageUploadedPart {
+  size: number;
 }
 
 /** What a disk's `writeObject()` receives besides the body: validated, with defaults applied. */

@@ -132,14 +132,24 @@ describe.skipIf(!minio)('S3Disk against MinIO', () => {
         return { partNumber: i + 1, etag: res.headers.get('etag')! };
       }),
     );
+    expect(await disk.listUploadedParts('incoming/clip.mp4', uploadId)).toEqual(
+      parts.map((part, i) => ({ ...part, size: datas[i].length })),
+    );
     const result = await disk.completeMultipartUpload('incoming/clip.mp4', uploadId, parts);
 
     expect(result).toMatchObject({ size: datas[0].length + 4, contentType: 'video/mp4' });
     expect((await disk.getBuffer('incoming/clip.mp4')).equals(Buffer.concat(datas))).toBe(true);
 
     const other = await disk.createMultipartUpload('incoming/dropped.bin');
+    await expect(
+      disk.completeMultipartUpload('incoming/dropped.bin', other.uploadId, [{ partNumber: 1, etag: '"0000"' }]),
+    ).rejects.toMatchObject({ name: 'StorageMultipartUploadError', code: 'InvalidPart', status: 400 });
     await disk.abortMultipartUpload('incoming/dropped.bin', other.uploadId);
     await expect(disk.abortMultipartUpload('incoming/dropped.bin', other.uploadId)).resolves.toBeUndefined();
+    await expect(disk.listUploadedParts('incoming/dropped.bin', other.uploadId)).rejects.toMatchObject({
+      code: 'NoSuchUpload',
+      status: 404,
+    });
     expect(await disk.exists('incoming/dropped.bin')).toBe(false);
   });
 });

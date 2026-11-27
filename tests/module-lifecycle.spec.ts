@@ -146,10 +146,6 @@ describe('an injected disk that is not configured', () => {
     await expect(ghost.list()).rejects.toThrow(message);
     await expect(ghost.signedUrl('a')).rejects.toThrow(message);
     await expect(ghost.signedUpload('a', { contentType: 'x/y' })).rejects.toThrow(message);
-    await expect(ghost.createMultipartUpload('a')).rejects.toThrow(message);
-    await expect(ghost.signedUploadPart('a', 'u', 1)).rejects.toThrow(message);
-    await expect(ghost.completeMultipartUpload('a', 'u', [{ partNumber: 1, etag: '"e"' }])).rejects.toThrow(message);
-    await expect(ghost.abortMultipartUpload('a', 'u')).rejects.toThrow(message);
     expect(() => ghost.url('a')).toThrow(message);
   });
 

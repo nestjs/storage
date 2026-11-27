@@ -4,18 +4,23 @@ import { isIP } from 'node:net';
 import { Readable } from 'node:stream';
 import { StorageError } from '../errors/storage.error.js';
 import { StorageFileNotFoundError } from '../errors/storage-file-not-found.error.js';
+import { StorageMultipartUploadError } from '../errors/storage-multipart-upload.error.js';
 import { StorageRangeNotSatisfiableError } from '../errors/storage-range-not-satisfiable.error.js';
 import { StorageServiceError } from '../errors/storage-service.error.js';
 import { assertValidKey, assertValidPrefix, encodeKeyPath, encodeRfc3986 } from '../utils/keys.util.js';
-import { StorageDisk } from '../disks/storage.disk.js';
+import { expiry, normalizeWrite, StorageDisk } from '../disks/storage.disk.js';
 import type {
   StorageDownload,
   StorageFile,
+  StorageListedPart,
   StorageListEntry,
   StorageListPage,
+  StorageMultipartUpload,
+  StorageMultipartUploadOptions,
   StorageObjectWrite,
   StorageRange,
   StorageSignalOptions,
+  StorageSignedPartRequest,
   StorageSignedUpload,
   StorageSignedUploadRequest,
   StorageUploadedPart,
@@ -27,6 +32,10 @@ import { encodeXml, xmlElements, xmlText } from './xml.util.js';
 
 const MiB = 1024 * 1024;
 const MAX_PARTS = 10_000;
+const MAX_PART_BYTES = 5 * 1024 * MiB;
+const PRINTABLE = /^[\x20-\x7e]*$/;
+/** Multipart errors caused by what the client sent, not by the store or the configuration. */
+const MULTIPART_CLIENT_CODES = new Set(['NoSuchUpload', 'InvalidPart', 'InvalidPartOrder', 'EntityTooSmall']);
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 const RETRYABLE_CODES = new Set([
   'SlowDown',
@@ -285,21 +294,51 @@ export class S3Disk extends StorageDisk {
 
   // --- multipart uploads the client sends ----------------------------------------------
 
-  protected override async createMultipartObject(key: string, file: StorageObjectWrite): Promise<string> {
-    return this.initiateUpload(this.prefix + key, this.writeHeaders(file), file.signal);
+  /**
+   * Starts an upload the client sends in parts, straight to the bucket: sign a URL per part with
+   * `signedUploadPart()`, then `completeMultipartUpload()` with each part's `ETag` (or
+   * `abortMultipartUpload()`). For files too large for one `signedUpload()`, or uploads that
+   * should resume: `listUploadedParts()` tells a resuming client which parts already landed. The
+   * file appears at `key` only when the upload completes.
+   */
+  async createMultipartUpload(
+    key: string,
+    options: StorageMultipartUploadOptions = {},
+  ): Promise<StorageMultipartUpload> {
+    assertValidKey(key);
+    const file = normalizeWrite(key, options, 'createMultipartUpload');
+    options.signal?.throwIfAborted();
+    const uploadId = await this.initiateUpload(this.prefix + key, this.writeHeaders(file), file.signal);
+    return { key, uploadId };
   }
 
-  protected override async presignUploadPart(
+  /**
+   * A time-limited URL the client `PUT`s one part to, with `headers`. The response's `ETag`
+   * header identifies the part: the client sends it back for `completeMultipartUpload()` (a
+   * browser can read it only if the bucket's CORS rules expose `ETag`). Every part but the last
+   * must be at least 5 MiB; on Cloudflare R2, every part but the last must also be the same size.
+   * Signing makes no request, so URLs can be signed as they're needed, and signed again for a
+   * part whose URL expired.
+   */
+  async signedUploadPart(
     key: string,
     uploadId: string,
     partNumber: number,
-    expiresAt: Date,
-    contentLength: number | undefined,
+    options: StorageSignedPartRequest = {},
   ): Promise<StorageSignedUpload> {
+    assertValidKey(key);
+    assertUploadId(uploadId, 'signedUploadPart');
+    assertPartNumber(partNumber, 'signedUploadPart');
+    const length = options.contentLength;
+    if (length !== undefined && (!Number.isSafeInteger(length) || length < 1 || length > MAX_PART_BYTES)) {
+      throw new TypeError('signedUploadPart(): `contentLength` must be a whole number of bytes, from 1 to 5 GiB');
+    }
+    const expiresAt = expiry(options.expiresIn);
+
     // Encryption is set when the upload is created: UploadPart takes only SSE-C headers
     const headers: Record<string, string> = {};
-    if (contentLength !== undefined) {
-      headers['content-length'] = String(contentLength);
+    if (length !== undefined) {
+      headers['content-length'] = String(length);
     }
 
     const url = presignUrl({
@@ -316,13 +355,77 @@ export class S3Disk extends StorageDisk {
     return { url: url.toString(), method: 'PUT', headers, expiresAt };
   }
 
-  protected override async completeMultipartObject(
+  /**
+   * The parts uploaded so far, in ascending order, for a client that resumes an upload (Uppy's
+   * `listParts`). Throws `StorageMultipartUploadError` (status 404) when the upload is gone.
+   */
+  async listUploadedParts(
     key: string,
     uploadId: string,
-    parts: StorageUploadedPart[],
-    options?: StorageSignalOptions,
+    options: StorageSignalOptions = {},
+  ): Promise<StorageListedPart[]> {
+    assertValidKey(key);
+    assertUploadId(uploadId, 'listUploadedParts');
+
+    const parts: StorageListedPart[] = [];
+    let marker: string | undefined;
+    do {
+      const query: [string, string][] = [
+        ['uploadId', uploadId],
+        ['max-parts', '1000'],
+      ];
+      if (marker !== undefined) {
+        query.push(['part-number-marker', marker]);
+      }
+      const res = await this.send({
+        operation: 'ListParts',
+        method: 'GET',
+        key: this.prefix + key,
+        query,
+        signal: options.signal,
+      }).catch((error: unknown) => {
+        throw multipartError(error, uploadId);
+      });
+      const xml = await res.text();
+
+      for (const part of xmlElements(xml, 'Part')) {
+        parts.push({
+          partNumber: Number(xmlText(part, 'PartNumber')),
+          etag: xmlText(part, 'ETag') ?? '',
+          size: Number(xmlText(part, 'Size') ?? 0),
+        });
+      }
+      const next = xmlText(xml, 'IsTruncated') === 'true' ? xmlText(xml, 'NextPartNumberMarker') : undefined;
+      // A marker that doesn't move on would loop forever
+      marker = next !== undefined && next !== marker ? next : undefined;
+    } while (marker !== undefined);
+
+    return parts;
+  }
+
+  /**
+   * Joins the uploaded parts into the file at `key`, replacing any file there. `parts` may come in
+   * any order. Throws `StorageMultipartUploadError` (status 4xx) for what the client sent: an
+   * upload that is gone, or a part that is missing, too small or doesn't match its `ETag`.
+   *
+   * Once the parts are joined, the call no longer aborts; if reading the file's details then
+   * fails, it throws a plain `StorageError` (the failure as its `cause`): the file is written, so
+   * don't retry the complete.
+   */
+  async completeMultipartUpload(
+    key: string,
+    uploadId: string,
+    parts: readonly StorageUploadedPart[],
+    options: StorageSignalOptions = {},
   ): Promise<StorageWriteResult> {
-    await this.completeUpload(this.prefix + key, uploadId, parts, options?.signal);
+    assertValidKey(key);
+    assertUploadId(uploadId, 'completeMultipartUpload');
+    const sorted = normalizeParts(parts);
+    options.signal?.throwIfAborted();
+
+    await this.completeUpload(this.prefix + key, uploadId, sorted, options.signal).catch((error: unknown) => {
+      throw multipartError(error, uploadId);
+    });
 
     // CompleteMultipartUpload doesn't report the size or the content type. The file is written
     // and the upload id is gone: not abortable from here, and a failure must not read as a failed
@@ -340,12 +443,16 @@ export class S3Disk extends StorageDisk {
     return { key, size: file.size, contentType: file.contentType, etag: file.etag };
   }
 
-  protected override async abortMultipartObject(
-    key: string,
-    uploadId: string,
-    options?: StorageSignalOptions,
-  ): Promise<void> {
-    await this.abortUpload(this.prefix + key, uploadId, options?.signal).catch((error: unknown) => {
+  /**
+   * Discards an upload and the parts sent so far. An upload that is already gone (completed,
+   * aborted or expired) is not an error. Uploads nobody completes or aborts keep their parts,
+   * which the store bills for: add a lifecycle rule that aborts incomplete uploads.
+   */
+  async abortMultipartUpload(key: string, uploadId: string, options: StorageSignalOptions = {}): Promise<void> {
+    assertValidKey(key);
+    assertUploadId(uploadId, 'abortMultipartUpload');
+    options.signal?.throwIfAborted();
+    await this.abortUpload(this.prefix + key, uploadId, options.signal).catch((error: unknown) => {
       // Already completed, aborted, or expired by a lifecycle rule
       if (!(error instanceof StorageServiceError && error.code === 'NoSuchUpload')) {
         throw error;
@@ -888,6 +995,51 @@ function isRetryable(error: unknown): boolean {
     RETRYABLE_CODES.has(error.code) ||
     (error.upstreamStatus !== undefined && RETRYABLE_STATUS.has(error.upstreamStatus))
   );
+}
+
+/** The client's mistakes as a `StorageMultipartUploadError` (4xx); the rest unchanged. */
+function multipartError(error: unknown, uploadId: string): unknown {
+  return error instanceof StorageServiceError && MULTIPART_CLIENT_CODES.has(error.code)
+    ? new StorageMultipartUploadError(error.code, uploadId, { cause: error })
+    : error;
+}
+
+/** An id `createMultipartUpload()` returned: it goes in a query string, so printable ASCII only. */
+function assertUploadId(uploadId: unknown, method: string): void {
+  if (typeof uploadId !== 'string' || uploadId === '' || !PRINTABLE.test(uploadId)) {
+    throw new TypeError(`${method}(): \`uploadId\` must be the id createMultipartUpload() returned`);
+  }
+}
+
+function assertPartNumber(partNumber: unknown, method: string): void {
+  if (!Number.isInteger(partNumber) || (partNumber as number) < 1 || (partNumber as number) > MAX_PARTS) {
+    throw new TypeError(`${method}(): \`partNumber\` must be a whole number from 1 to ${MAX_PARTS}`);
+  }
+}
+
+/** At least one part, each number once, each with its ETag; returned in ascending order. */
+function normalizeParts(parts: readonly StorageUploadedPart[]): StorageUploadedPart[] {
+  if (!Array.isArray(parts) || parts.length === 0) {
+    throw new TypeError('completeMultipartUpload(): `parts` must list at least one uploaded part');
+  }
+  const seen = new Set<number>();
+  const result = parts.map((part: StorageUploadedPart | null | undefined) => {
+    if (typeof part !== 'object' || part === null) {
+      throw new TypeError('completeMultipartUpload(): each part must be `{ partNumber, etag }`');
+    }
+    assertPartNumber(part.partNumber, 'completeMultipartUpload');
+    if (typeof part.etag !== 'string' || part.etag === '' || !PRINTABLE.test(part.etag)) {
+      throw new TypeError(
+        `completeMultipartUpload(): part ${part.partNumber} needs the \`etag\` its upload answered with`,
+      );
+    }
+    if (seen.has(part.partNumber)) {
+      throw new TypeError(`completeMultipartUpload(): part ${part.partNumber} is listed twice`);
+    }
+    seen.add(part.partNumber);
+    return { partNumber: part.partNumber, etag: part.etag };
+  });
+  return result.sort((a, b) => a.partNumber - b.partNumber);
 }
 
 function statusCode(status: number): string {

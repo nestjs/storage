@@ -8,17 +8,14 @@ import type {
   StorageListEntry,
   StorageListOptions,
   StorageListPage,
-  StorageMultipartUpload,
   StorageMultipartUploadOptions,
   StorageObjectWrite,
   StoragePutOptions,
   StorageRange,
   StorageSignalOptions,
-  StorageSignedPartRequest,
   StorageSignedUpload,
   StorageSignedUploadRequest,
   StorageSignedUrlRequest,
-  StorageUploadedPart,
   StorageWriteResult,
 } from '../interfaces/storage-disk.interface.js';
 import { abortable, checkLength, knownLength, readAll, toChunks } from '../utils/body.util.js';
@@ -36,9 +33,6 @@ const DEFAULT_SIGNED_MS = 15 * 60_000;
 const MAX_METADATA_BYTES = 2048;
 const HEADER_VALUE = /^[\x20-\x7e]*$/;
 const METADATA_NAME = /^[a-z0-9][a-z0-9_-]*$/i;
-// S3's limits, applied on every disk
-const MAX_PARTS = 10_000;
-const MAX_PART_BYTES = 5 * 1024 ** 3;
 
 /**
  * A place files live: a local directory, a bucket, memory. The abstract class is the
@@ -131,44 +125,6 @@ export abstract class StorageDisk {
       contentLength: request.contentLength,
     });
     return { url, method: 'PUT', headers: { 'content-type': request.contentType }, expiresAt };
-  }
-
-  /**
-   * Multipart uploads the client sends straight to the store, part by part. A disk that supports
-   * them (S3) overrides these four; the others throw. Keys, upload ids, part numbers and parts
-   * arrive validated, parts in ascending order.
-   */
-  protected async createMultipartObject(_key: string, _file: StorageObjectWrite): Promise<string> {
-    throw this.multipartUnsupported('createMultipartUpload');
-  }
-
-  protected async presignUploadPart(
-    _key: string,
-    _uploadId: string,
-    _partNumber: number,
-    _expiresAt: Date,
-    _contentLength: number | undefined,
-  ): Promise<StorageSignedUpload> {
-    throw this.multipartUnsupported('signedUploadPart');
-  }
-
-  /** Throws when the upload is gone, or a part is missing or doesn't match its ETag. */
-  protected async completeMultipartObject(
-    _key: string,
-    _uploadId: string,
-    _parts: StorageUploadedPart[],
-    _options?: StorageSignalOptions,
-  ): Promise<StorageWriteResult> {
-    throw this.multipartUnsupported('completeMultipartUpload');
-  }
-
-  /** An upload that is already gone (completed, aborted or expired) is not an error. */
-  protected async abortMultipartObject(
-    _key: string,
-    _uploadId: string,
-    _options?: StorageSignalOptions,
-  ): Promise<void> {
-    throw this.multipartUnsupported('abortMultipartUpload');
   }
 
   /** Optional. Releases what the disk opened itself. Called on application shutdown. */
@@ -323,78 +279,6 @@ export abstract class StorageDisk {
   }
 
   /**
-   * Starts an upload the client sends in parts, straight to the disk: sign a URL per part with
-   * `signedUploadPart()`, then `completeMultipartUpload()` with each part's `ETag` (or
-   * `abortMultipartUpload()`). For files too large for one `signedUpload()`, or uploads that
-   * should resume. The file appears at `key` only when the upload completes.
-   */
-  async createMultipartUpload(
-    key: string,
-    options: StorageMultipartUploadOptions = {},
-  ): Promise<StorageMultipartUpload> {
-    assertValidKey(key);
-    const file = normalizeWrite(key, options, 'createMultipartUpload');
-    options.signal?.throwIfAborted();
-    const uploadId = await this.createMultipartObject(key, file);
-    return { key, uploadId };
-  }
-
-  /**
-   * A time-limited URL the client `PUT`s one part to, with `headers`. The response's `ETag`
-   * header identifies the part: the client sends it back for `completeMultipartUpload()` (a
-   * browser can read it only if the bucket's CORS rules expose `ETag`). Every part but the last
-   * must be at least 5 MiB. Signing makes no request, so URLs can be signed as they're needed,
-   * and signed again for a part whose URL expired.
-   */
-  async signedUploadPart(
-    key: string,
-    uploadId: string,
-    partNumber: number,
-    options: StorageSignedPartRequest = {},
-  ): Promise<StorageSignedUpload> {
-    assertValidKey(key);
-    assertUploadId(uploadId, 'signedUploadPart');
-    assertPartNumber(partNumber, 'signedUploadPart');
-    const length = options.contentLength;
-    if (length !== undefined && (!Number.isSafeInteger(length) || length < 1 || length > MAX_PART_BYTES)) {
-      throw new TypeError('signedUploadPart(): `contentLength` must be a whole number of bytes, from 1 to 5 GiB');
-    }
-    return this.presignUploadPart(key, uploadId, partNumber, expiry(options.expiresIn), length);
-  }
-
-  /**
-   * Joins the uploaded parts into the file at `key`, replacing any file there. `parts` may come in
-   * any order. Throws `StorageServiceError` when the upload is gone, or a part is missing, too
-   * small or doesn't match its `ETag`. Once the store has joined the parts, the call no longer
-   * aborts; if reading the file's details then fails, it throws a plain `StorageError` (the
-   * failure as its `cause`): the file is written, so don't retry the complete.
-   */
-  async completeMultipartUpload(
-    key: string,
-    uploadId: string,
-    parts: readonly StorageUploadedPart[],
-    options: StorageSignalOptions = {},
-  ): Promise<StorageWriteResult> {
-    assertValidKey(key);
-    assertUploadId(uploadId, 'completeMultipartUpload');
-    const sorted = normalizeParts(parts);
-    options.signal?.throwIfAborted();
-    return this.completeMultipartObject(key, uploadId, sorted, { signal: options.signal });
-  }
-
-  /**
-   * Discards an upload and the parts sent so far. An upload that is already gone (completed,
-   * aborted or expired) is not an error. Uploads nobody completes or aborts keep their parts,
-   * which the store bills for: on S3, add a lifecycle rule that aborts incomplete uploads.
-   */
-  async abortMultipartUpload(key: string, uploadId: string, options: StorageSignalOptions = {}): Promise<void> {
-    assertValidKey(key);
-    assertUploadId(uploadId, 'abortMultipartUpload');
-    options.signal?.throwIfAborted();
-    return this.abortMultipartObject(key, uploadId, { signal: options.signal });
-  }
-
-  /**
    * Checks an app-served signed URL (the full request URL, or its query) and returns what it
    * grants. Throws `StorageSignedUrlError` (status 403). `serveSignedUrl()` and
    * `receiveSignedUpload()` call it for you.
@@ -403,13 +287,6 @@ export abstract class StorageDisk {
     const claims = this.requireSigner('verifySignedUrl').verify(url, method);
     assertValidKey(claims.key);
     return claims;
-  }
-
-  private multipartUnsupported(method: string): StorageError {
-    return new StorageError(
-      `${this.constructor.name} doesn't support multipart uploads, so ${method}() can't be used. ` +
-        'Use signedUpload() for a single-request upload.',
-    );
   }
 
   private requireSigner(method: string): UrlSigner {
@@ -450,8 +327,11 @@ export function servesSignedUrls(disk: StorageDisk): boolean {
   return (disk as unknown as { signer?: unknown }).signer !== undefined;
 }
 
-/** The options a write stores on the file, validated, with the content type defaulted. */
-function normalizeWrite(
+/**
+ * The options a write stores on the file, validated, with the content type defaulted. Shared with
+ * `S3Disk.createMultipartUpload()`; `method` names the caller in errors.
+ */
+export function normalizeWrite(
   key: string,
   options: StorageMultipartUploadOptions,
   method: string,
@@ -515,41 +395,6 @@ function normalizeMetadata(metadata: Record<string, string> | undefined, method:
   return result;
 }
 
-/** An id `createMultipartUpload()` returned: it goes in a query string, so printable ASCII only. */
-function assertUploadId(uploadId: unknown, method: string): void {
-  if (typeof uploadId !== 'string' || uploadId === '' || !HEADER_VALUE.test(uploadId)) {
-    throw new TypeError(`${method}(): \`uploadId\` must be the id createMultipartUpload() returned`);
-  }
-}
-
-function assertPartNumber(partNumber: unknown, method: string): void {
-  if (!Number.isInteger(partNumber) || (partNumber as number) < 1 || (partNumber as number) > MAX_PARTS) {
-    throw new TypeError(`${method}(): \`partNumber\` must be a whole number from 1 to ${MAX_PARTS}`);
-  }
-}
-
-/** At least one part, each number once, each with its ETag; returned in ascending order. */
-function normalizeParts(parts: readonly StorageUploadedPart[]): StorageUploadedPart[] {
-  if (!Array.isArray(parts) || parts.length === 0) {
-    throw new TypeError('completeMultipartUpload(): `parts` must list at least one uploaded part');
-  }
-  const seen = new Set<number>();
-  const result = parts.map((part) => {
-    assertPartNumber(part?.partNumber, 'completeMultipartUpload');
-    if (typeof part.etag !== 'string' || part.etag === '' || !HEADER_VALUE.test(part.etag)) {
-      throw new TypeError(
-        `completeMultipartUpload(): part ${part.partNumber} needs the \`etag\` its upload answered with`,
-      );
-    }
-    if (seen.has(part.partNumber)) {
-      throw new TypeError(`completeMultipartUpload(): part ${part.partNumber} is listed twice`);
-    }
-    seen.add(part.partNumber);
-    return { partNumber: part.partNumber, etag: part.etag };
-  });
-  return result.sort((a, b) => a.partNumber - b.partNumber);
-}
-
 /** Values that end up in HTTP headers: printable ASCII only, so no header injection. */
 function assertHeaderValue(option: string, value: unknown, required = false) {
   if (typeof value !== 'string' || !HEADER_VALUE.test(value) || (required && value.trim() === '')) {
@@ -600,7 +445,8 @@ export function resolveRange(range: StorageRange, size: number): { start: number
   return { start: range.start, end: Math.min(range.end ?? size - 1, size - 1) };
 }
 
-function expiry(expiresIn: Duration | undefined): Date {
+/** When a signed URL expires: `expiresIn` from now, 15 minutes by default, at most 7 days. */
+export function expiry(expiresIn: Duration | undefined): Date {
   let ms: number;
   try {
     ms = expiresIn === undefined ? DEFAULT_SIGNED_MS : toMs(expiresIn);

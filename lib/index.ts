@@ -29,6 +29,7 @@ export type {
   StorageFile,
   StorageGetOptions,
   StorageListEntry,
+  StorageListedPart,
   StorageListOptions,
   StorageListPage,
   StorageMultipartUpload,

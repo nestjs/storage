@@ -5,6 +5,8 @@ import {
   type S3DiskOptions,
   StorageError,
   StorageFileNotFoundError,
+  StorageInvalidKeyError,
+  StorageMultipartUploadError,
   StorageServiceError,
 } from '../lib/index.js';
 import { ACCESS_KEY, FakeS3, SECRET_KEY } from './fake-s3.js';
@@ -503,22 +505,115 @@ describe('S3Disk', () => {
       fake.signatureFailures.length = 0;
     });
 
-    it('fails to complete with a wrong ETag, or an upload that is gone', async () => {
+    it("answers the client's mistakes with a 4xx StorageMultipartUploadError", async () => {
       const disk = s3();
       const { uploadId } = await disk.createMultipartUpload('c.bin');
-      await sendParts([await disk.signedUploadPart('c.bin', uploadId, 1)], [bytes(10)]);
+      const datas = [bytes(10, 1), bytes(10, 2)];
+      const urls = await Promise.all(datas.map((_, i) => disk.signedUploadPart('c.bin', uploadId, i + 1)));
+      const parts = await sendParts(urls, datas);
 
       const wrong = await errorOf(() =>
         disk.completeMultipartUpload('c.bin', uploadId, [{ partNumber: 1, etag: '"0000"' }]),
       );
-      expect(wrong).toBeInstanceOf(StorageServiceError);
-      expect(wrong).toMatchObject({ operation: 'CompleteMultipartUpload', code: 'InvalidPart', upstreamStatus: 400 });
+      expect(wrong).toBeInstanceOf(StorageMultipartUploadError);
+      expect(wrong).toMatchObject({ code: 'InvalidPart', status: 400, uploadId });
+      expect((wrong as Error).cause).toMatchObject({ operation: 'CompleteMultipartUpload', upstreamStatus: 400 });
 
-      const gone = await errorOf(() =>
-        disk.completeMultipartUpload('c.bin', 'no-such-upload', [{ partNumber: 1, etag: '"0000"' }]),
-      );
-      expect(gone).toMatchObject({ code: 'NoSuchUpload', upstreamStatus: 404 });
+      // The first of two parts is under 5 MiB
+      await expect(disk.completeMultipartUpload('c.bin', uploadId, parts)).rejects.toMatchObject({
+        name: 'StorageMultipartUploadError',
+        code: 'EntityTooSmall',
+        status: 400,
+      });
+
+      for (const call of [
+        () => disk.completeMultipartUpload('c.bin', 'no-such-upload', parts),
+        () => disk.listUploadedParts('c.bin', 'no-such-upload'),
+      ]) {
+        const gone = await errorOf(call);
+        expect(gone).toBeInstanceOf(StorageMultipartUploadError);
+        expect(gone).toMatchObject({ code: 'NoSuchUpload', status: 404, uploadId: 'no-such-upload' });
+      }
       expect(fake.object('c.bin')).toBeUndefined();
+
+      // The store's own failures stay StorageServiceError, with no 4xx status
+      fake.fail((r) => r.method === 'POST', { status: 403, code: 'AccessDenied', times: 1 });
+      const denied = await errorOf(() => disk.completeMultipartUpload('c.bin', uploadId, parts));
+      expect(denied).toBeInstanceOf(StorageServiceError);
+      expect(denied).not.toHaveProperty('status');
+    });
+
+    it('lists the parts uploaded so far, for a client that resumes, a page of 1000 at a time', async () => {
+      const disk = s3({ prefix: 'tenants/t1/' });
+      const { uploadId } = await disk.createMultipartUpload('big.bin');
+      expect(await disk.listUploadedParts('big.bin', uploadId)).toEqual([]);
+
+      const datas = [bytes(10, 1), bytes(20, 2)];
+      const urls = await Promise.all([3, 1].map((n) => disk.signedUploadPart('big.bin', uploadId, n)));
+      const sent = await sendParts(urls, datas);
+      expect(await disk.listUploadedParts('big.bin', uploadId)).toEqual([
+        { partNumber: 1, etag: sent[1].etag, size: 20 },
+        { partNumber: 3, etag: sent[0].etag, size: 10 },
+      ]);
+
+      const upload = fake.uploads.get(uploadId)!;
+      for (let n = 1; n <= 2500; n++) {
+        upload.parts.set(n, { data: Buffer.alloc(1), etag: `"e${n}"` });
+      }
+      fake.requests.length = 0;
+      const listed = await disk.listUploadedParts('big.bin', uploadId);
+      expect(listed.map((p) => p.partNumber)).toEqual(Array.from({ length: 2500 }, (_, i) => i + 1));
+      expect(listed[2499]).toEqual({ partNumber: 2500, etag: '"e2500"', size: 1 });
+      expect(fake.requests.map((r) => [r.key, r.query['part-number-marker']])).toEqual([
+        ['tenants/t1/big.bin', undefined],
+        ['tenants/t1/big.bin', '1000'],
+        ['tenants/t1/big.bin', '2000'],
+      ]);
+    });
+
+    it('checks every argument before sending a request', async () => {
+      const disk = s3();
+      const part = { partNumber: 1, etag: '"a"' };
+
+      await expect(disk.createMultipartUpload('../a')).rejects.toBeInstanceOf(StorageInvalidKeyError);
+      await expect(disk.createMultipartUpload('a', { contentType: 'x/y\r\nX: y' })).rejects.toThrow(TypeError);
+      await expect(disk.createMultipartUpload('a', { metadata: { 'bad name': 'x' } })).rejects.toThrow(
+        'createMultipartUpload(): metadata name "bad name"',
+      );
+
+      for (const uploadId of ['', 'a\nb', 42]) {
+        await expect(disk.signedUploadPart('a', uploadId as string, 1)).rejects.toThrow(
+          'signedUploadPart(): `uploadId` must be the id createMultipartUpload() returned',
+        );
+      }
+      for (const partNumber of [0, 10_001, 1.5]) {
+        await expect(disk.signedUploadPart('a', 'u', partNumber)).rejects.toThrow(
+          '`partNumber` must be a whole number from 1 to 10000',
+        );
+      }
+      for (const contentLength of [0, 5 * 1024 ** 3 + 1, 2.5]) {
+        await expect(disk.signedUploadPart('a', 'u', 1, { contentLength })).rejects.toThrow('from 1 to 5 GiB');
+      }
+      await expect(disk.signedUploadPart('a', 'u', 1, { expiresIn: '8d' })).rejects.toThrow(
+        'between 1 second and 7 days',
+      );
+      await expect(disk.listUploadedParts('a', '')).rejects.toThrow('listUploadedParts(): `uploadId`');
+
+      await expect(disk.completeMultipartUpload('a', 'u', [])).rejects.toThrow('at least one uploaded part');
+      await expect(disk.completeMultipartUpload('a', 'u', [part, part])).rejects.toThrow('part 1 is listed twice');
+      await expect(disk.completeMultipartUpload('a', 'u', [{ partNumber: 1, etag: '' }])).rejects.toThrow(
+        'part 1 needs the `etag`',
+      );
+      await expect(disk.completeMultipartUpload('a', 'u', [null as unknown as typeof part])).rejects.toThrow(
+        'each part must be `{ partNumber, etag }`',
+      );
+      await expect(disk.abortMultipartUpload('a', '')).rejects.toThrow(TypeError);
+
+      const reason = new Error('client went away');
+      await expect(disk.completeMultipartUpload('a', 'u', [part], { signal: AbortSignal.abort(reason) })).rejects.toBe(
+        reason,
+      );
+      expect(fake.requests).toEqual([]);
     });
 
     it('once the parts are joined, an abort or a failed HEAD does not read as a failed complete', async () => {
