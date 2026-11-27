@@ -126,6 +126,38 @@ export interface StorageSignedUpload {
   expiresAt: Date;
 }
 
+/**
+ * What `createMultipartUpload()` takes. Applied to the file when the upload completes, as
+ * `put()` applies its options.
+ */
+export interface StorageMultipartUploadOptions extends StorageSignalOptions {
+  /** Default: from the key's extension, else `application/octet-stream`. */
+  contentType?: string;
+  cacheControl?: string;
+  contentDisposition?: string;
+  /** Your own string metadata, under the same rules as `put()`'s. */
+  metadata?: Record<string, string>;
+}
+
+/** An upload in progress: keep both, to sign its parts and complete or abort it. */
+export interface StorageMultipartUpload {
+  key: string;
+  uploadId: string;
+}
+
+export interface StorageSignedPartRequest {
+  /** The part must be exactly this many bytes. */
+  contentLength?: number;
+  /** Default 15 minutes; at most 7 days. */
+  expiresIn?: Duration;
+}
+
+/** A part the client uploaded: its number and the `ETag` header the `PUT` answered with. */
+export interface StorageUploadedPart {
+  partNumber: number;
+  etag: string;
+}
+
 /** What a disk's `writeObject()` receives besides the body: validated, with defaults applied. */
 export interface StorageObjectWrite {
   contentType: string;

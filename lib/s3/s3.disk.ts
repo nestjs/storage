@@ -18,6 +18,7 @@ import type {
   StorageSignalOptions,
   StorageSignedUpload,
   StorageSignedUploadRequest,
+  StorageUploadedPart,
   StorageWriteResult,
 } from '../interfaces/storage-disk.interface.js';
 import { duration, type ResolvedRetry, resolveRetry, sleep } from './retry.util.js';
@@ -199,22 +200,7 @@ export class S3Disk extends StorageDisk {
     parts: PartReader,
     file: StorageObjectWrite,
   ): Promise<StorageWriteResult> {
-    const init = await this.send({
-      operation: 'CreateMultipartUpload',
-      method: 'POST',
-      key: fullKey,
-      query: [['uploads', '']],
-      headers,
-      signal: file.signal,
-    });
-    const uploadId = xmlText(await init.text(), 'UploadId');
-    if (!uploadId) {
-      throw new StorageServiceError({
-        operation: 'CreateMultipartUpload',
-        code: 'InvalidResponse',
-        message: 'no UploadId',
-      });
-    }
+    const uploadId = await this.initiateUpload(fullKey, headers, file.signal);
 
     const etags: string[] = [];
     const inFlight = new Set<Promise<void>>();
@@ -285,36 +271,137 @@ export class S3Disk extends StorageDisk {
         throw (failure as { error: unknown }).error;
       }
 
-      const xml =
-        '<CompleteMultipartUpload>' +
-        etags
-          .map((etag, i) => `<Part><PartNumber>${i + 1}</PartNumber><ETag>${encodeXml(etag)}</ETag></Part>`)
-          .join('') +
-        '</CompleteMultipartUpload>';
-      const res = await this.send({
-        operation: 'CompleteMultipartUpload',
-        method: 'POST',
-        key: fullKey,
-        query: [['uploadId', uploadId]],
-        headers: { 'content-type': 'application/xml' },
-        body: Buffer.from(xml),
-        errorInBody: true,
-        signal: file.signal,
-      });
+      const uploaded = etags.map((etag, i) => ({ partNumber: i + 1, etag }));
+      const etag = await this.completeUpload(fullKey, uploadId, uploaded, file.signal);
 
-      const result = await res.text();
-
-      return { key, size, contentType: file.contentType, etag: xmlText(result, 'ETag') };
+      return { key, size, contentType: file.contentType, etag };
     } catch (error) {
       await Promise.allSettled(inFlight);
-      await this.send({
-        operation: 'AbortMultipartUpload',
-        method: 'DELETE',
-        key: fullKey,
-        query: [['uploadId', uploadId]],
-      }).catch(() => undefined); // best effort: a lifecycle rule cleans up what this misses
+      // best effort: a lifecycle rule cleans up what this misses
+      await this.abortUpload(fullKey, uploadId).catch(() => undefined);
       throw error;
     }
+  }
+
+  // --- multipart uploads the client sends ----------------------------------------------
+
+  protected override async createMultipartObject(key: string, file: StorageObjectWrite): Promise<string> {
+    return this.initiateUpload(this.prefix + key, this.writeHeaders(file), file.signal);
+  }
+
+  protected override async presignUploadPart(
+    key: string,
+    uploadId: string,
+    partNumber: number,
+    expiresAt: Date,
+    contentLength: number | undefined,
+  ): Promise<StorageSignedUpload> {
+    // Encryption is set when the upload is created: UploadPart takes only SSE-C headers
+    const headers: Record<string, string> = {};
+    if (contentLength !== undefined) {
+      headers['content-length'] = String(contentLength);
+    }
+
+    const url = presignUrl({
+      method: 'PUT',
+      url: this.objectUrl(this.prefix + key, [
+        ['partNumber', String(partNumber)],
+        ['uploadId', uploadId],
+      ]),
+      headers,
+      expiresInSeconds: secondsUntil(expiresAt),
+      credentials: await this.credentials(),
+      region: this.region,
+    });
+    return { url: url.toString(), method: 'PUT', headers, expiresAt };
+  }
+
+  protected override async completeMultipartObject(
+    key: string,
+    uploadId: string,
+    parts: StorageUploadedPart[],
+    options?: StorageSignalOptions,
+  ): Promise<StorageWriteResult> {
+    await this.completeUpload(this.prefix + key, uploadId, parts, options?.signal);
+    // CompleteMultipartUpload doesn't report the size or the content type
+    const file = await this.headObject(key, { signal: options?.signal });
+    return { key, size: file.size, contentType: file.contentType, etag: file.etag };
+  }
+
+  protected override async abortMultipartObject(
+    key: string,
+    uploadId: string,
+    options?: StorageSignalOptions,
+  ): Promise<void> {
+    await this.abortUpload(this.prefix + key, uploadId, options?.signal).catch((error: unknown) => {
+      // Already completed, aborted, or expired by a lifecycle rule
+      if (!(error instanceof StorageServiceError && error.code === 'NoSuchUpload')) {
+        throw error;
+      }
+    });
+  }
+
+  private async initiateUpload(
+    fullKey: string,
+    headers: Record<string, string>,
+    signal: AbortSignal | undefined,
+  ): Promise<string> {
+    const res = await this.send({
+      operation: 'CreateMultipartUpload',
+      method: 'POST',
+      key: fullKey,
+      query: [['uploads', '']],
+      headers,
+      signal,
+    });
+    const uploadId = xmlText(await res.text(), 'UploadId');
+    if (!uploadId) {
+      throw new StorageServiceError({
+        operation: 'CreateMultipartUpload',
+        code: 'InvalidResponse',
+        message: 'no UploadId',
+      });
+    }
+    return uploadId;
+  }
+
+  /** Resolves with the file's ETag. */
+  private async completeUpload(
+    fullKey: string,
+    uploadId: string,
+    parts: StorageUploadedPart[],
+    signal: AbortSignal | undefined,
+  ): Promise<string | undefined> {
+    const xml =
+      '<CompleteMultipartUpload>' +
+      parts
+        .map(
+          ({ partNumber, etag }) =>
+            `<Part><PartNumber>${partNumber}</PartNumber><ETag>${encodeXml(etag)}</ETag></Part>`,
+        )
+        .join('') +
+      '</CompleteMultipartUpload>';
+    const res = await this.send({
+      operation: 'CompleteMultipartUpload',
+      method: 'POST',
+      key: fullKey,
+      query: [['uploadId', uploadId]],
+      headers: { 'content-type': 'application/xml' },
+      body: Buffer.from(xml),
+      errorInBody: true,
+      signal,
+    });
+    return xmlText(await res.text(), 'ETag');
+  }
+
+  private async abortUpload(fullKey: string, uploadId: string, signal?: AbortSignal): Promise<void> {
+    await this.send({
+      operation: 'AbortMultipartUpload',
+      method: 'DELETE',
+      key: fullKey,
+      query: [['uploadId', uploadId]],
+      signal,
+    });
   }
 
   protected async copyObject(from: string, to: string, options?: StorageSignalOptions): Promise<StorageWriteResult> {

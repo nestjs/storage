@@ -21,6 +21,8 @@ import {
   type StorageFile,
   type StorageListPage,
   type StorageObjectWrite,
+  type StorageSignedUpload,
+  type StorageUploadedPart,
   type StorageWriteResult,
 } from '../lib/index.js';
 
@@ -559,6 +561,118 @@ describe('a custom disk extending StorageDisk', () => {
       "MapDisk has no `signedUrls` option, so signedUrl() can't be used",
     );
     expect(() => new MapDisk({ publicUrl: 'nope' })).toThrow('MapDisk `publicUrl`');
+  });
+});
+
+/** A MapDisk that records what the multipart hooks receive. */
+class MultipartMapDisk extends MapDisk {
+  protected override async createMultipartObject(key: string, file: StorageObjectWrite): Promise<string> {
+    this.calls.push(`create ${key} ${file.contentType} ${JSON.stringify(file.metadata)}`);
+    return 'upload-1';
+  }
+
+  protected override async presignUploadPart(
+    key: string,
+    uploadId: string,
+    partNumber: number,
+    expiresAt: Date,
+    contentLength: number | undefined,
+  ): Promise<StorageSignedUpload> {
+    this.calls.push(`sign ${key} ${uploadId} ${partNumber} ${contentLength}`);
+    return { url: `https://store.example.com/${key}?partNumber=${partNumber}`, method: 'PUT', headers: {}, expiresAt };
+  }
+
+  protected override async completeMultipartObject(
+    key: string,
+    uploadId: string,
+    parts: StorageUploadedPart[],
+  ): Promise<StorageWriteResult> {
+    this.calls.push(`complete ${key} ${uploadId} ${parts.map((p) => `${p.partNumber}=${p.etag}`).join(',')}`);
+    return { key, size: 0, contentType: 'application/octet-stream' };
+  }
+
+  protected override async abortMultipartObject(key: string, uploadId: string): Promise<void> {
+    this.calls.push(`abort ${key} ${uploadId}`);
+  }
+}
+
+describe('multipart uploads', () => {
+  it('passes validated keys, write options and sorted parts to the disk', async () => {
+    const disk = new MultipartMapDisk();
+
+    expect(await disk.createMultipartUpload('docs/a.pdf', { metadata: { Owner: 'u1' } })).toEqual({
+      key: 'docs/a.pdf',
+      uploadId: 'upload-1',
+    });
+    const part = await disk.signedUploadPart('docs/a.pdf', 'upload-1', 2, { contentLength: 10, expiresIn: '1h' });
+    expect(part.expiresAt.getTime()).toBeGreaterThan(Date.now() + 59 * 60_000);
+    await disk.completeMultipartUpload('docs/a.pdf', 'upload-1', [
+      { partNumber: 2, etag: '"b"' },
+      { partNumber: 1, etag: '"a"' },
+    ]);
+    await disk.abortMultipartUpload('docs/a.pdf', 'upload-1');
+
+    expect(disk.calls).toEqual([
+      'create docs/a.pdf application/pdf {"owner":"u1"}',
+      'sign docs/a.pdf upload-1 2 10',
+      'complete docs/a.pdf upload-1 1="a",2="b"',
+      'abort docs/a.pdf upload-1',
+    ]);
+  });
+
+  it('checks every argument before calling the disk', async () => {
+    const disk = new MultipartMapDisk();
+    const part = { partNumber: 1, etag: '"a"' };
+
+    await expect(disk.createMultipartUpload('../a')).rejects.toBeInstanceOf(StorageInvalidKeyError);
+    await expect(disk.createMultipartUpload('a', { contentType: 'x/y\r\nX: y' })).rejects.toThrow(TypeError);
+    await expect(disk.createMultipartUpload('a', { metadata: { 'bad name': 'x' } })).rejects.toThrow(
+      'createMultipartUpload(): metadata name "bad name"',
+    );
+
+    for (const uploadId of ['', 'a\nb', 42]) {
+      await expect(disk.signedUploadPart('a', uploadId as string, 1)).rejects.toThrow(
+        'signedUploadPart(): `uploadId` must be the id createMultipartUpload() returned',
+      );
+    }
+    for (const partNumber of [0, 10_001, 1.5]) {
+      await expect(disk.signedUploadPart('a', 'u', partNumber)).rejects.toThrow(
+        '`partNumber` must be a whole number from 1 to 10000',
+      );
+    }
+    for (const contentLength of [0, 5 * 1024 ** 3 + 1, 2.5]) {
+      await expect(disk.signedUploadPart('a', 'u', 1, { contentLength })).rejects.toThrow('from 1 to 5 GiB');
+    }
+    await expect(disk.signedUploadPart('a', 'u', 1, { expiresIn: '8d' })).rejects.toThrow(
+      'between 1 second and 7 days',
+    );
+
+    await expect(disk.completeMultipartUpload('a', 'u', [])).rejects.toThrow('at least one uploaded part');
+    await expect(disk.completeMultipartUpload('a', 'u', [part, part])).rejects.toThrow('part 1 is listed twice');
+    await expect(disk.completeMultipartUpload('a', 'u', [{ partNumber: 1, etag: '' }])).rejects.toThrow(
+      'part 1 needs the `etag`',
+    );
+    await expect(disk.abortMultipartUpload('a', '')).rejects.toThrow(TypeError);
+
+    const reason = new Error('client went away');
+    await expect(disk.completeMultipartUpload('a', 'u', [part], { signal: AbortSignal.abort(reason) })).rejects.toBe(
+      reason,
+    );
+    expect(disk.calls).toEqual([]);
+  });
+
+  it('a disk without multipart support says so, naming the method', async () => {
+    for (const disk of [new MapDisk(), new InMemoryDisk({ signedUrls })]) {
+      const name = disk.constructor.name;
+      await expect(disk.createMultipartUpload('a')).rejects.toThrow(
+        `${name} doesn't support multipart uploads, so createMultipartUpload() can't be used`,
+      );
+      await expect(disk.signedUploadPart('a', 'u', 1)).rejects.toThrow('signedUploadPart()');
+      await expect(disk.completeMultipartUpload('a', 'u', [{ partNumber: 1, etag: '"a"' }])).rejects.toThrow(
+        'completeMultipartUpload()',
+      );
+      await expect(disk.abortMultipartUpload('a', 'u')).rejects.toBeInstanceOf(StorageError);
+    }
   });
 });
 

@@ -40,6 +40,13 @@ const bytes = (size: number, seed = 1) => {
   }
   return data;
 };
+const errorOf = (run: () => unknown) =>
+  Promise.resolve()
+    .then(run)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    );
 const sha = (data: Buffer) => createHash('sha256').update(data).digest('hex');
 
 describe('S3Disk', () => {
@@ -403,6 +410,128 @@ describe('S3Disk', () => {
       await expect(s3().signedUpload('a', { contentType: 'x/y', expiresIn: '1 week' as never })).rejects.toThrow(
         TypeError,
       );
+    });
+  });
+
+  describe('multipart uploads the client sends', () => {
+    /** What a browser does with the signed URLs: PUT each part, keep the ETag it answers with. */
+    const sendParts = async (urls: { url: string; headers: Record<string, string> }[], datas: Buffer[]) =>
+      Promise.all(
+        urls.map(async ({ url, headers }, i) => {
+          const { 'content-length': _, ...sent } = headers;
+          const res = await fetch(url, { method: 'PUT', headers: sent, body: datas[i] });
+          expect(res.status).toBe(200);
+          return { partNumber: i + 1, etag: res.headers.get('etag')! };
+        }),
+      );
+
+    it('creates the upload, signs each part, and completes it into one file', { timeout: 30_000 }, async () => {
+      const disk = s3();
+      const datas = [bytes(5 * MiB, 1), bytes(5 * MiB, 2), bytes(123, 3)];
+
+      const upload = await disk.createMultipartUpload('videos/clip.mp4', {
+        contentType: 'video/mp4',
+        cacheControl: 'max-age=60',
+        metadata: { Owner: 'u1' },
+      });
+      expect(upload).toEqual({ key: 'videos/clip.mp4', uploadId: expect.any(String) });
+
+      const urls = await Promise.all(
+        datas.map((data, i) =>
+          disk.signedUploadPart(upload.key, upload.uploadId, i + 1, { contentLength: data.length, expiresIn: '1h' }),
+        ),
+      );
+      expect(urls[0]).toMatchObject({ method: 'PUT', headers: { 'content-length': String(5 * MiB) } });
+      expect(new URL(urls[0].url).searchParams.get('partNumber')).toBe('1');
+      expect(new URL(urls[0].url).searchParams.get('uploadId')).toBe(upload.uploadId);
+
+      const parts = await sendParts(urls, datas);
+      const result = await disk.completeMultipartUpload(upload.key, upload.uploadId, [...parts].reverse());
+
+      const data = Buffer.concat(datas);
+      expect(result).toEqual({
+        key: 'videos/clip.mp4',
+        size: data.length,
+        contentType: 'video/mp4',
+        etag: expect.stringMatching(/-3"$/),
+      });
+      expect(fake.object('videos/clip.mp4')).toMatchObject({
+        contentType: 'video/mp4',
+        cacheControl: 'max-age=60',
+        metadata: { owner: 'u1' },
+      });
+      expect(fake.object('videos/clip.mp4')!.data.equals(data)).toBe(true);
+      expect(fake.uploads.size).toBe(0);
+      // The server never sees the parts: they go from the client straight to the store
+      expect(fake.requests.filter((r) => r.auth === 'header').map((r) => r.method)).toEqual(['POST', 'POST', 'HEAD']);
+    });
+
+    it('applies the disk prefix, so the other methods find the file', async () => {
+      const disk = s3({ prefix: 'tenants/t1/' });
+      const upload = await disk.createMultipartUpload('a.bin');
+      const parts = await sendParts([await disk.signedUploadPart('a.bin', upload.uploadId, 1)], [bytes(10)]);
+      await disk.completeMultipartUpload('a.bin', upload.uploadId, parts);
+
+      expect(fake.object('tenants/t1/a.bin')).toMatchObject({ contentType: 'application/octet-stream' });
+      expect(await disk.exists('a.bin')).toBe(true);
+    });
+
+    it('sets encryption on the create request only: UploadPart refuses SSE-S3 and SSE-KMS headers', async () => {
+      const disk = s3({ serverSideEncryption: 'aws:kms', kmsKeyId: 'key-1' });
+      const upload = await disk.createMultipartUpload('secret.bin');
+      const part = await disk.signedUploadPart('secret.bin', upload.uploadId, 1);
+      expect(part.headers).toEqual({});
+
+      await disk.completeMultipartUpload('secret.bin', upload.uploadId, await sendParts([part], [bytes(10)]));
+      expect(fake.object('secret.bin')).toMatchObject({ encryption: 'aws:kms', kmsKeyId: 'key-1' });
+    });
+
+    it('a part URL accepts only the signed length, and stops working when it expires', async () => {
+      const disk = s3();
+      const { uploadId } = await disk.createMultipartUpload('p.bin');
+      const part = await disk.signedUploadPart('p.bin', uploadId, 1, { contentLength: 4 });
+
+      expect((await fetch(part.url, { method: 'PUT', body: bytes(5) })).status).toBe(403);
+      expect((await fetch(part.url, { method: 'PUT', body: bytes(4) })).status).toBe(200);
+
+      vi.useFakeTimers({ toFake: ['Date'], now: Date.now() - 2 * 3_600_000 });
+      const old = await disk.signedUploadPart('p.bin', uploadId, 2, { expiresIn: '1h' });
+      vi.useRealTimers();
+      expect((await fetch(old.url, { method: 'PUT', body: bytes(4) })).status).toBe(403);
+
+      expect(fake.signatureFailures).toHaveLength(2);
+      fake.signatureFailures.length = 0;
+    });
+
+    it('fails to complete with a wrong ETag, or an upload that is gone', async () => {
+      const disk = s3();
+      const { uploadId } = await disk.createMultipartUpload('c.bin');
+      await sendParts([await disk.signedUploadPart('c.bin', uploadId, 1)], [bytes(10)]);
+
+      const wrong = await errorOf(() =>
+        disk.completeMultipartUpload('c.bin', uploadId, [{ partNumber: 1, etag: '"0000"' }]),
+      );
+      expect(wrong).toBeInstanceOf(StorageServiceError);
+      expect(wrong).toMatchObject({ operation: 'CompleteMultipartUpload', code: 'InvalidPart', upstreamStatus: 400 });
+
+      const gone = await errorOf(() =>
+        disk.completeMultipartUpload('c.bin', 'no-such-upload', [{ partNumber: 1, etag: '"0000"' }]),
+      );
+      expect(gone).toMatchObject({ code: 'NoSuchUpload', upstreamStatus: 404 });
+      expect(fake.object('c.bin')).toBeUndefined();
+    });
+
+    it('aborts an upload, and treats an upload that is already gone as aborted', async () => {
+      const disk = s3();
+      const { uploadId } = await disk.createMultipartUpload('x.bin');
+      await sendParts([await disk.signedUploadPart('x.bin', uploadId, 1)], [bytes(10)]);
+
+      await disk.abortMultipartUpload('x.bin', uploadId);
+      expect(fake.uploads.size).toBe(0);
+      await expect(disk.abortMultipartUpload('x.bin', uploadId)).resolves.toBeUndefined();
+
+      fake.fail((r) => r.method === 'DELETE', { status: 403, code: 'AccessDenied', times: 1 });
+      await expect(disk.abortMultipartUpload('x.bin', 'other')).rejects.toMatchObject({ code: 'AccessDenied' });
     });
   });
 

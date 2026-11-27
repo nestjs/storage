@@ -203,7 +203,9 @@ export class FakeS3 {
       return this.complete(res, bucket, key, q.uploadId, body);
     }
     if (method === 'DELETE' && q.uploadId) {
-      this.uploads.delete(q.uploadId);
+      if (!this.uploads.delete(q.uploadId)) {
+        return this.error(res, 404, 'NoSuchUpload', 'no such upload');
+      }
       res.writeHead(204).end();
       return;
     }

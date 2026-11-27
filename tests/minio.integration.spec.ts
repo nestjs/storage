@@ -119,6 +119,29 @@ describe.skipIf(!minio)('S3Disk against MinIO', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-disposition')).toBe('attachment; filename="photo.png"');
   });
+
+  it('completes a multipart upload whose parts the client sends with signed URLs, and aborts another', async () => {
+    const datas = [Buffer.alloc(5 * 1024 * 1024, 1), Buffer.from('tail')];
+    const { uploadId } = await disk.createMultipartUpload('incoming/clip.mp4', { contentType: 'video/mp4' });
+
+    const parts = await Promise.all(
+      datas.map(async (data, i) => {
+        const part = await disk.signedUploadPart('incoming/clip.mp4', uploadId, i + 1, { contentLength: data.length });
+        const res = await fetch(part.url, { method: 'PUT', body: data });
+        expect(res.status).toBe(200);
+        return { partNumber: i + 1, etag: res.headers.get('etag')! };
+      }),
+    );
+    const result = await disk.completeMultipartUpload('incoming/clip.mp4', uploadId, parts);
+
+    expect(result).toMatchObject({ size: datas[0].length + 4, contentType: 'video/mp4' });
+    expect((await disk.getBuffer('incoming/clip.mp4')).equals(Buffer.concat(datas))).toBe(true);
+
+    const other = await disk.createMultipartUpload('incoming/dropped.bin');
+    await disk.abortMultipartUpload('incoming/dropped.bin', other.uploadId);
+    await expect(disk.abortMultipartUpload('incoming/dropped.bin', other.uploadId)).resolves.toBeUndefined();
+    expect(await disk.exists('incoming/dropped.bin')).toBe(false);
+  });
 });
 
 function freePort(): Promise<number> {
