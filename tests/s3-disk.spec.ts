@@ -521,6 +521,36 @@ describe('S3Disk', () => {
       expect(fake.object('c.bin')).toBeUndefined();
     });
 
+    it('once the parts are joined, an abort or a failed HEAD does not read as a failed complete', async () => {
+      const controller = new AbortController();
+      const disk = s3({
+        // The caller aborts after the parts are joined, as the HEAD that follows starts
+        fetch: async (input, init) => {
+          if (init?.method === 'HEAD') {
+            controller.abort(new Error('client went away'));
+          }
+          return fetch(input, init);
+        },
+      });
+
+      const first = await disk.createMultipartUpload('done.bin');
+      const parts = await sendParts([await disk.signedUploadPart('done.bin', first.uploadId, 1)], [bytes(10)]);
+      await expect(
+        disk.completeMultipartUpload('done.bin', first.uploadId, parts, { signal: controller.signal }),
+      ).resolves.toMatchObject({ key: 'done.bin', size: 10 });
+
+      const second = await disk.createMultipartUpload('head.bin');
+      const more = await sendParts([await disk.signedUploadPart('head.bin', second.uploadId, 1)], [bytes(10)]);
+      fake.fail((r) => r.method === 'HEAD', { status: 403, code: 'AccessDenied', times: 1 });
+      const error = await errorOf(() => disk.completeMultipartUpload('head.bin', second.uploadId, more));
+
+      expect(error).toBeInstanceOf(StorageError);
+      expect(error).not.toBeInstanceOf(StorageServiceError);
+      expect((error as Error).message).toContain('the upload completed and the file is at "head.bin"');
+      expect((error as Error).cause).toMatchObject({ operation: 'HeadObject', upstreamStatus: 403 });
+      expect(fake.object('head.bin')!.data.equals(bytes(10))).toBe(true);
+    });
+
     it('aborts an upload, and treats an upload that is already gone as aborted', async () => {
       const disk = s3();
       const { uploadId } = await disk.createMultipartUpload('x.bin');

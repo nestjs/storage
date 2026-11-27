@@ -101,6 +101,18 @@ class MissingDisk extends StorageDisk {
   protected async copyObject(): Promise<never> {
     this.fail();
   }
+  protected override async createMultipartObject(): Promise<never> {
+    this.fail();
+  }
+  protected override async presignUploadPart(): Promise<never> {
+    this.fail();
+  }
+  protected override async completeMultipartObject(): Promise<never> {
+    this.fail();
+  }
+  protected override async abortMultipartObject(): Promise<never> {
+    this.fail();
+  }
   override url(): string {
     this.fail();
   }

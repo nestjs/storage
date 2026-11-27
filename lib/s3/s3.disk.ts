@@ -323,8 +323,20 @@ export class S3Disk extends StorageDisk {
     options?: StorageSignalOptions,
   ): Promise<StorageWriteResult> {
     await this.completeUpload(this.prefix + key, uploadId, parts, options?.signal);
-    // CompleteMultipartUpload doesn't report the size or the content type
-    const file = await this.headObject(key, { signal: options?.signal });
+
+    // CompleteMultipartUpload doesn't report the size or the content type. The file is written
+    // and the upload id is gone: not abortable from here, and a failure must not read as a failed
+    // (or retryable) complete.
+    let file: StorageFile;
+    try {
+      file = await this.headObject(key);
+    } catch (error) {
+      throw new StorageError(
+        `completeMultipartUpload(): the upload completed and the file is at "${key}", ` +
+          'but reading its size and content type afterwards failed. Use stat() to read them.',
+        { cause: error },
+      );
+    }
     return { key, size: file.size, contentType: file.contentType, etag: file.etag };
   }
 

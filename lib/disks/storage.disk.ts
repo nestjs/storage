@@ -365,7 +365,9 @@ export abstract class StorageDisk {
   /**
    * Joins the uploaded parts into the file at `key`, replacing any file there. `parts` may come in
    * any order. Throws `StorageServiceError` when the upload is gone, or a part is missing, too
-   * small or doesn't match its `ETag`.
+   * small or doesn't match its `ETag`. Once the store has joined the parts, the call no longer
+   * aborts; if reading the file's details then fails, it throws a plain `StorageError` (the
+   * failure as its `cause`): the file is written, so don't retry the complete.
    */
   async completeMultipartUpload(
     key: string,
