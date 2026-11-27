@@ -8,6 +8,7 @@ import type {
   StorageListEntry,
   StorageListOptions,
   StorageListPage,
+  StorageMultipartUploadOptions,
   StorageObjectWrite,
   StoragePutOptions,
   StorageRange,
@@ -326,7 +327,15 @@ export function servesSignedUrls(disk: StorageDisk): boolean {
   return (disk as unknown as { signer?: unknown }).signer !== undefined;
 }
 
-function normalizePut(key: string, body: StorageBody, options: StoragePutOptions): StorageObjectWrite {
+/**
+ * The options a write stores on the file, validated, with the content type defaulted. Shared with
+ * `S3Disk.createMultipartUpload()`; `method` names the caller in errors.
+ */
+export function normalizeWrite(
+  key: string,
+  options: StorageMultipartUploadOptions,
+  method: string,
+): Omit<StorageObjectWrite, 'contentLength'> {
   if (options.contentType !== undefined) {
     assertHeaderValue('contentType', options.contentType, true);
   }
@@ -336,7 +345,19 @@ function normalizePut(key: string, body: StorageBody, options: StoragePutOptions
   if (options.contentDisposition !== undefined) {
     assertHeaderValue('contentDisposition', options.contentDisposition);
   }
-  const metadata = normalizeMetadata(options.metadata);
+
+  return {
+    contentType: options.contentType ?? contentTypeFromKey(key),
+    cacheControl: options.cacheControl,
+    contentDisposition: options.contentDisposition,
+    metadata: normalizeMetadata(options.metadata, method),
+    explicitContentType: options.contentType !== undefined,
+    signal: options.signal,
+  };
+}
+
+function normalizePut(key: string, body: StorageBody, options: StoragePutOptions): StorageObjectWrite {
+  const file = normalizeWrite(key, options, 'put');
 
   const inMemory = knownLength(body);
   let contentLength = options.contentLength;
@@ -345,38 +366,30 @@ function normalizePut(key: string, body: StorageBody, options: StoragePutOptions
   }
   contentLength ??= inMemory;
 
-  return {
-    contentType: options.contentType ?? contentTypeFromKey(key),
-    cacheControl: options.cacheControl,
-    contentDisposition: options.contentDisposition,
-    metadata,
-    contentLength,
-    explicitContentType: options.contentType !== undefined,
-    signal: options.signal,
-  };
+  return { ...file, contentLength };
 }
 
-function normalizeMetadata(metadata: Record<string, string> | undefined): Record<string, string> {
+function normalizeMetadata(metadata: Record<string, string> | undefined, method: string): Record<string, string> {
   const result: Record<string, string> = {};
   let bytes = 0;
 
   for (const [name, value] of Object.entries(metadata ?? {})) {
     if (!METADATA_NAME.test(name)) {
-      throw new TypeError(`put(): metadata name "${name}" may only contain letters, digits, "-" and "_"`);
+      throw new TypeError(`${method}(): metadata name "${name}" may only contain letters, digits, "-" and "_"`);
     }
     if (typeof value !== 'string' || !HEADER_VALUE.test(value)) {
-      throw new TypeError(`put(): metadata "${name}" must be a string of printable ASCII characters`);
+      throw new TypeError(`${method}(): metadata "${name}" must be a string of printable ASCII characters`);
     }
     const lower = name.toLowerCase();
     if (Object.hasOwn(result, lower)) {
-      throw new TypeError(`put(): metadata "${name}" is set twice (names are case-insensitive)`);
+      throw new TypeError(`${method}(): metadata "${name}" is set twice (names are case-insensitive)`);
     }
     result[lower] = value;
     bytes += lower.length + value.length;
   }
 
   if (bytes > MAX_METADATA_BYTES) {
-    throw new TypeError(`put(): metadata can't exceed ${MAX_METADATA_BYTES} bytes (names and values)`);
+    throw new TypeError(`${method}(): metadata can't exceed ${MAX_METADATA_BYTES} bytes (names and values)`);
   }
 
   return result;
@@ -432,7 +445,8 @@ export function resolveRange(range: StorageRange, size: number): { start: number
   return { start: range.start, end: Math.min(range.end ?? size - 1, size - 1) };
 }
 
-function expiry(expiresIn: Duration | undefined): Date {
+/** When a signed URL expires: `expiresIn` from now, 15 minutes by default, at most 7 days. */
+export function expiry(expiresIn: Duration | undefined): Date {
   let ms: number;
   try {
     ms = expiresIn === undefined ? DEFAULT_SIGNED_MS : toMs(expiresIn);

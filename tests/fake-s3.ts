@@ -202,8 +202,13 @@ export class FakeS3 {
     if (method === 'POST' && q.uploadId) {
       return this.complete(res, bucket, key, q.uploadId, body);
     }
+    if (method === 'GET' && q.uploadId) {
+      return this.listParts(res, q);
+    }
     if (method === 'DELETE' && q.uploadId) {
-      this.uploads.delete(q.uploadId);
+      if (!this.uploads.delete(q.uploadId)) {
+        return this.error(res, 404, 'NoSuchUpload', 'no such upload');
+      }
       res.writeHead(204).end();
       return;
     }
@@ -540,6 +545,32 @@ export class FakeS3 {
     const etag = `"${md5(body)}"`;
     upload.parts.set(Number(q.partNumber), { data: body, etag });
     res.writeHead(200, { etag }).end();
+  }
+
+  private listParts(res: ServerResponse, q: Record<string, string>) {
+    const upload = this.uploads.get(q.uploadId);
+    if (!upload) {
+      return this.error(res, 404, 'NoSuchUpload', 'no such upload');
+    }
+
+    const max = Number(q['max-parts'] ?? 1000);
+    const after = Number(q['part-number-marker'] ?? 0);
+    const numbers = [...upload.parts.keys()].filter((n) => n > after).sort((a, b) => a - b);
+    const page = numbers.slice(0, max);
+    const truncated = numbers.length > max;
+    const parts = page
+      .map((n) => {
+        const part = upload.parts.get(n)!;
+        return `<Part><PartNumber>${n}</PartNumber><LastModified>2026-01-01T00:00:00.000Z</LastModified><ETag>${escape(part.etag)}</ETag><Size>${part.data.length}</Size></Part>`;
+      })
+      .join('');
+    this.xml(
+      res,
+      200,
+      `<ListPartsResult><UploadId>${q.uploadId}</UploadId><PartNumberMarker>${after}</PartNumberMarker>` +
+        `${truncated ? `<NextPartNumberMarker>${page.at(-1)}</NextPartNumberMarker>` : ''}` +
+        `<MaxParts>${max}</MaxParts><IsTruncated>${truncated}</IsTruncated>${parts}</ListPartsResult>`,
+    );
   }
 
   private complete(res: ServerResponse, bucket: string, key: string, id: string, body: Buffer) {
